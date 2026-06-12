@@ -110,6 +110,11 @@ public class GuiEventHandler {
 
         if (activePanel.isCollapsed()) return;
 
+        // 选中合成格浮层盖在列表之上：点在浮层内只消费点击，不穿透到被遮住的行。
+        if (RecipePanelRenderer.isOverlayHit(activePanel, guiLeft, guiTop, mx, my)) {
+            return;
+        }
+
         // Search field click
         activePanel.searchField.mouseClicked(mx, my, 0);
 

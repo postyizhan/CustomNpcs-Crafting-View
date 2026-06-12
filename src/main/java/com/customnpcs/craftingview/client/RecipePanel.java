@@ -131,6 +131,17 @@ public class RecipePanel {
         selectedRecipe = recipe;
     }
 
+    /**
+     * 选中配方在当前可视页中的行索引（0-based）；未选中或选中项不在当前可视页时返回 -1。
+     * 供渲染层决定合成格浮层朝上还是朝下展开。
+     */
+    public int getSelectedVisibleIndex() {
+        if (selectedRecipe == null) return -1;
+        int idx = filtered.indexOf(selectedRecipe);
+        if (idx < scrollOffset || idx >= scrollOffset + RECIPES_PER_PAGE) return -1;
+        return idx - scrollOffset;
+    }
+
     public void toggleCollapsed() {
         collapsed = !collapsed;
     }

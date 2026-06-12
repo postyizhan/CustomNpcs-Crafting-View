@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
@@ -30,8 +31,8 @@ public class RecipePanelRenderer {
     private static final int CATEGORY_TAB_H = 14;
     private static final int RECIPE_ROW_H = 16;
     private static final int GRID_CELL = 16;
-    // Height of the inline ingredient grid block: "Recipe:" label + 4 rows of cells
-    private static final int GRID_BLOCK_H = 10 + 4 * (GRID_CELL + 1) + PADDING;
+    // Floating ingredient-grid overlay height: top pad + "Recipe:" label + 4 rows of cells + bottom pad
+    private static final int OVERLAY_H = PADDING + 10 + 4 * (GRID_CELL + 1) + PADDING;
 
     // Colors
     private static final int COLOR_BG = 0xCC2D2D2D;
@@ -44,6 +45,7 @@ public class RecipePanelRenderer {
     private static final int COLOR_TEXT_DIM = 0xFFAAAAAA;
     private static final int COLOR_PLUS_BTN = 0xFF336633;
     private static final int COLOR_PLUS_HOV = 0xFF44AA44;
+    private static final int COLOR_OVERLAY_BG = 0xF0202020;
 
     private static final RenderItem itemRenderer = new RenderItem();
 
@@ -73,7 +75,7 @@ public class RecipePanelRenderer {
         List<RecipeView> visible = panel.getVisible();
         RecipeView sel = panel.getSelectedRecipe();
 
-        int ph = calcPanelHeight(visible, sel, panel);
+        int ph = calcPanelHeight(panel);
         drawRect(px, py, px + pw, py + ph, COLOR_BG);
         drawBorder(px, py, pw, ph);
 
@@ -83,21 +85,26 @@ public class RecipePanelRenderer {
         drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false);
         cy = drawHeader(cx, px, cy, pw, panel, mouseX, mouseY, fr);
 
-        // Recipe list — grid inserted inline after selected row
+        // Recipe list — fixed-height rows, no inline push. Selected recipe's grid is drawn afterwards
+        // as a floating overlay so list layout never shifts and the grid never overflows the screen.
         ItemStack tooltipStack = null;
+        int listTop = cy;
         for (int i = 0; i < visible.size(); i++) {
             RecipeView recipe = visible.get(i);
             boolean selected = recipe.equals(sel);
             drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr);
             cy += RECIPE_ROW_H;
-            if (selected) {
-                tooltipStack = drawIngredientGrid(cx, cy, recipe, mouseX, mouseY, fr);
-                cy += GRID_BLOCK_H;
-            }
         }
 
         if (panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage()) {
             fr.drawString("\u25BC", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+        }
+
+        // Floating ingredient grid for the selected recipe, anchored to its row; direction adaptive.
+        int selIdx = panel.getSelectedVisibleIndex();
+        if (selIdx >= 0 && sel != null) {
+            int rowY = listTop + selIdx * RECIPE_ROW_H;
+            tooltipStack = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr);
         }
 
         if (tooltipStack != null) {
@@ -151,9 +158,23 @@ public class RecipePanelRenderer {
         fr.drawString("+", btnX + 2, ry + 4, COLOR_TEXT);
     }
 
-    private static ItemStack drawIngredientGrid(int cx, int cy, RecipeView recipe, int mouseX, int mouseY,
+    /**
+     * 选中配方的 4x4 合成格浮层。锚定在选中行（rowY）旁，方向自适应：行下方空间够则朝下展开，
+     * 否则朝上展开，保证浮层始终在屏幕内、不被截断。浮层自带背景与边框，盖在列表之上。
+     * 返回鼠标悬停的原料 ItemStack（用于 tooltip），无则 null。
+     */
+    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int mouseX, int mouseY,
         FontRenderer fr) {
 
+        // 方向自适应：贴选中行下方，下方超屏则改贴上方（overlayY 与命中测试共用，保证一致）。
+        int oy = overlayY(rowY);
+
+        int ox = px;
+        drawRect(ox, oy, ox + pw, oy + OVERLAY_H, COLOR_OVERLAY_BG);
+        drawBorder(ox, oy, pw, OVERLAY_H);
+
+        int cx = ox + PADDING;
+        int cy = oy + PADDING;
         fr.drawString("Recipe:", cx, cy, COLOR_TEXT_DIM);
         cy += 10;
 
@@ -177,12 +198,10 @@ public class RecipePanelRenderer {
         return tooltipStack;
     }
 
-    private static int calcPanelHeight(List<RecipeView> visible, RecipeView sel, RecipePanel panel) {
+    private static int calcPanelHeight(RecipePanel panel) {
         int h = LIST_BASE_OFFSET;
-        for (RecipeView recipe : visible) {
-            h += RECIPE_ROW_H;
-            if (recipe.equals(sel)) h += GRID_BLOCK_H;
-        }
+        h += panel.getVisible()
+            .size() * RECIPE_ROW_H;
         boolean canScrollDown = panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage();
         if (canScrollDown) h += 10;
         return h + PADDING;
@@ -285,10 +304,10 @@ public class RecipePanelRenderer {
     public static int getRecipeRowHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
         int px = panel.getPanelX(guiLeft);
         int cx = px + PADDING;
-        List<RecipeView> visible = panel.getVisible();
-        RecipeView sel = panel.getSelectedRecipe();
-        for (int i = 0; i < visible.size(); i++) {
-            int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, i);
+        int visibleCount = panel.getVisible()
+            .size();
+        for (int i = 0; i < visibleCount; i++) {
+            int ry = guiTop + LIST_BASE_OFFSET + i * RECIPE_ROW_H;
             if (mx >= cx && mx < px + RecipePanel.PANEL_WIDTH - PADDING && my >= ry && my < ry + RECIPE_ROW_H) return i;
         }
         return -1;
@@ -296,11 +315,35 @@ public class RecipePanelRenderer {
 
     public static boolean isPlusButtonHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my, int rowIndex) {
         int px = panel.getPanelX(guiLeft);
-        List<RecipeView> visible = panel.getVisible();
-        RecipeView sel = panel.getSelectedRecipe();
-        int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, rowIndex);
+        int ry = guiTop + LIST_BASE_OFFSET + rowIndex * RECIPE_ROW_H;
         int btnX = px + RecipePanel.PANEL_WIDTH - PADDING - 12;
         return mx >= btnX && mx < btnX + 10 && my >= ry + 3 && my < ry + 13;
+    }
+
+    /**
+     * 选中合成格浮层当前是否命中给定屏幕坐标。与渲染用同一套自适应方向逻辑，供点击处理消费浮层内的点击，
+     * 避免点击穿透到被浮层遮住的列表行。未选中或选中项不在可视页时返回 false。
+     */
+    public static boolean isOverlayHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
+        if (panel.isCollapsed()) return false;
+        int selIdx = panel.getSelectedVisibleIndex();
+        if (selIdx < 0) return false;
+        int px = panel.getPanelX(guiLeft);
+        int rowY = guiTop + LIST_BASE_OFFSET + selIdx * RECIPE_ROW_H;
+        int oy = overlayY(rowY);
+        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + OVERLAY_H;
+    }
+
+    /** 浮层 Y 坐标：默认贴选中行下方，下方超屏则改贴上方。渲染与命中测试共用，保证一致。 */
+    private static int overlayY(int rowY) {
+        int screenH = new ScaledResolution(
+            Minecraft.getMinecraft(),
+            Minecraft.getMinecraft().displayWidth,
+            Minecraft.getMinecraft().displayHeight).getScaledHeight();
+        int oy = rowY + RECIPE_ROW_H;
+        if (oy + OVERLAY_H > screenH) oy = rowY - OVERLAY_H;
+        if (oy < 0) oy = 0;
+        return oy;
     }
 
     public static boolean isPanelHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
@@ -309,18 +352,7 @@ public class RecipePanelRenderer {
             return mx >= x && mx < x + COLLAPSE_BTN_W + 4 && my >= guiTop && my < guiTop + 20;
         }
         int px = panel.getPanelX(guiLeft);
-        int ph = calcPanelHeight(panel.getVisible(), panel.getSelectedRecipe(), panel);
+        int ph = calcPanelHeight(panel);
         return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= guiTop && my < guiTop + ph;
-    }
-
-    /** 计算第 targetIndex 行的起始 Y 坐标，考虑选中行展开的额外高度 */
-    private static int getRowY(int baseY, List<RecipeView> visible, RecipeView sel, int targetIndex) {
-        int cy = baseY;
-        for (int i = 0; i < targetIndex; i++) {
-            cy += RECIPE_ROW_H;
-            if (visible.get(i)
-                .equals(sel)) cy += GRID_BLOCK_H;
-        }
-        return cy;
     }
 }
