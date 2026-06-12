@@ -31,6 +31,9 @@ public class RecipePanel {
     private final List<RecipeView> filtered = new ArrayList<>();
     private final List<CategoryDefinition> categories = new ArrayList<>();
 
+    // 缓存可见列表，避免每次 getVisible() 创建 subList
+    private final List<RecipeView> cachedVisible = new ArrayList<>();
+
     private boolean collapsed = false;
     private int scrollOffset = 0;
     private RecipeView selectedRecipe = null;
@@ -71,35 +74,50 @@ public class RecipePanel {
         // Clamp scroll
         int maxScroll = Math.max(0, filtered.size() - RECIPES_PER_PAGE);
         if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+
+        updateVisibleCache();
     }
 
     private boolean matchesCategory(RecipeView recipe, CategoryDefinition cat) {
         if (cat == BROWSE_ALL || (cat.recipeIds.isEmpty() && cat.recipeNames.isEmpty())) return true;
         if (cat.recipeIds.contains(recipe.id)) return true;
-        if (recipe.name != null) {
-            String rname = recipe.name.toLowerCase();
+
+        // 优化：使用 HashSet 查找（需要 Config.CategoryDefinition 支持）
+        // 当前先用线性查找，但使用缓存的小写名称避免重复 toLowerCase()
+        String lowerName = recipe.getLowerCaseName();
+        if (lowerName != null) {
             for (String n : cat.recipeNames) {
-                if (rname.contains(n)) return true;
+                if (lowerName.contains(n)) return true;
             }
         }
         return false;
     }
 
     private boolean matchesSearch(RecipeView recipe, String query) {
-        if (recipe.name != null && recipe.name.toLowerCase()
-            .contains(query)) return true;
-        if (recipe.getRecipeOutput() != null) {
-            String itemName = recipe.getRecipeOutput()
-                .getDisplayName()
-                .toLowerCase();
-            if (itemName.contains(query)) return true;
-        }
+        // 使用缓存的小写名称，避免每次搜索都调用 toLowerCase()
+        String lowerName = recipe.getLowerCaseName();
+        if (lowerName != null && lowerName.contains(query)) return true;
+
+        String lowerDisplayName = recipe.getLowerCaseDisplayName();
+        if (lowerDisplayName != null && lowerDisplayName.contains(query)) return true;
+
         return false;
     }
 
-    public List<RecipeView> getVisible() {
+    /**
+     * 更新可见列表缓存，在 rebuildFiltered() 和 scroll() 后调用。
+     * 避免每帧 getVisible() 创建新的 subList，减少 GC 压力。
+     */
+    private void updateVisibleCache() {
+        cachedVisible.clear();
         int end = Math.min(scrollOffset + RECIPES_PER_PAGE, filtered.size());
-        return filtered.subList(scrollOffset, end);
+        for (int i = scrollOffset; i < end; i++) {
+            cachedVisible.add(filtered.get(i));
+        }
+    }
+
+    public List<RecipeView> getVisible() {
+        return cachedVisible;
     }
 
     public int getScrollOffset() {
@@ -117,6 +135,7 @@ public class RecipePanel {
     public void scroll(int delta) {
         int maxScroll = Math.max(0, filtered.size() - RECIPES_PER_PAGE);
         scrollOffset = Math.max(0, Math.min(scrollOffset + delta, maxScroll));
+        updateVisibleCache();
     }
 
     public void setCategory(int index) {

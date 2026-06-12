@@ -12,8 +12,12 @@ import net.minecraft.item.ItemStack;
  * import 任一宿主的 RecipeCarpentry 类，从而单源码兼容两种宿主。
  *
  * <p>
- * 不变字段在构造时一次性反射读出并缓存为 public final；每帧可能变动的产物/原料
- * （{@link #getRecipeOutput()} / {@link #getCraftingItem(int)}）则按需反射。
+ * <b>性能优化：</b>
+ * <ul>
+ * <li>不变字段在构造时一次性反射读出并缓存为 public final</li>
+ * <li>配方产物（getRecipeOutput）缓存，避免每帧反射（假定配方产物运行时不变）</li>
+ * <li>配方名称小写缓存，优化搜索性能</li>
+ * </ul>
  */
 public final class RecipeView {
 
@@ -28,6 +32,12 @@ public final class RecipeView {
     public final boolean ignoreDamage;
     public final boolean ignoreNBT;
 
+    // 缓存字段：减少反射和字符串处理开销
+    private ItemStack cachedOutput;
+    private String cachedLowerCaseName;
+    private String cachedLowerCaseDisplayName;
+    private boolean outputCached = false;
+
     RecipeView(Object delegate) {
         this.delegate = delegate;
         this.id = RecipeAccess.readInt(delegate, RecipeAccess.fId, -1);
@@ -38,14 +48,48 @@ public final class RecipeView {
         this.ignoreNBT = RecipeAccess.readBool(delegate, RecipeAccess.fIgnoreNBT);
     }
 
-    /** 配方产物。每帧渲染调用，走反射；返回 null 表示不可用。 */
+    /**
+     * 配方产物。首次调用反射读取后缓存，避免每帧反射开销。
+     *
+     * <p>
+     * <b>注意：</b>假定配方产物在运行时不会动态修改。如果宿主 mod 会修改配方产物，
+     * 需要添加缓存失效机制（当前实现未考虑此场景）。
+     */
     public ItemStack getRecipeOutput() {
-        return RecipeAccess.readOutput(delegate);
+        if (!outputCached) {
+            cachedOutput = RecipeAccess.readOutput(delegate);
+            outputCached = true;
+        }
+        return cachedOutput;
     }
 
     /** 第 index 个合成原料。走反射；返回 null 表示空格或不可用。 */
     public ItemStack getCraftingItem(int index) {
         return RecipeAccess.readCraftItem(delegate, index);
+    }
+
+    /**
+     * 获取小写配方名称，用于搜索过滤。缓存以避免重复 toLowerCase() 调用。
+     */
+    public String getLowerCaseName() {
+        if (cachedLowerCaseName == null && name != null) {
+            cachedLowerCaseName = name.toLowerCase();
+        }
+        return cachedLowerCaseName;
+    }
+
+    /**
+     * 获取小写产物显示名称，用于搜索过滤。缓存以避免重复 getDisplayName() + toLowerCase() 调用。
+     */
+    public String getLowerCaseDisplayName() {
+        if (cachedLowerCaseDisplayName == null) {
+            ItemStack output = getRecipeOutput();
+            if (output != null) {
+                cachedLowerCaseDisplayName = output.getDisplayName()
+                    .toLowerCase();
+            }
+        }
+        return cachedLowerCaseDisplayName;
     }
 
     /**

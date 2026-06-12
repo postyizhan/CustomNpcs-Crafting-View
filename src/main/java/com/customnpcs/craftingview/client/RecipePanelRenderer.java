@@ -6,7 +6,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
@@ -58,16 +57,18 @@ public class RecipePanelRenderer {
         if (!(gui instanceof GuiContainerNPCInterface)) return;
         GuiContainerNPCInterface container = (GuiContainerNPCInterface) gui;
 
+        // 优化：缓存 Minecraft 实例和 FontRenderer，避免重复调用
+        Minecraft mc = Minecraft.getMinecraft();
+        FontRenderer fr = mc.fontRenderer;
+
         int guiLeft = container.guiLeft;
         int guiTop = container.guiTop;
 
         int px = panel.getPanelX(guiLeft);
         int py = guiTop;
 
-        FontRenderer fr = Minecraft.getMinecraft().fontRenderer;
-
         if (panel.isCollapsed()) {
-            drawCollapsedTab(guiLeft - COLLAPSE_BTN_W - 8, py, mouseX, mouseY, panel);
+            drawCollapsedTab(guiLeft - COLLAPSE_BTN_W - 8, py, mouseX, mouseY, panel, fr);
             return;
         }
 
@@ -82,7 +83,7 @@ public class RecipePanelRenderer {
         int cx = px + PADDING;
         int cy = py + PADDING;
 
-        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false);
+        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false, fr);
         cy = drawHeader(cx, px, cy, pw, panel, mouseX, mouseY, fr);
 
         // Recipe list — fixed-height rows, no inline push. Selected recipe's grid is drawn afterwards
@@ -92,23 +93,24 @@ public class RecipePanelRenderer {
         for (int i = 0; i < visible.size(); i++) {
             RecipeView recipe = visible.get(i);
             boolean selected = recipe.equals(sel);
-            drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr);
+            drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr, mc);
             cy += RECIPE_ROW_H;
         }
 
         if (panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage()) {
-            fr.drawString("\u25BC", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+            fr.drawString("▼", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
         }
 
         // Floating ingredient grid for the selected recipe, anchored to its row; direction adaptive.
         int selIdx = panel.getSelectedVisibleIndex();
         if (selIdx >= 0 && sel != null) {
             int rowY = listTop + selIdx * RECIPE_ROW_H;
-            tooltipStack = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr);
+            // 优化：传递 gui.height 避免每次创建 ScaledResolution
+            tooltipStack = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr, gui.height, mc);
         }
 
         if (tooltipStack != null) {
-            drawItemTooltip(gui, tooltipStack, mouseX, mouseY);
+            drawItemTooltip(gui, tooltipStack, mouseX, mouseY, mc);
         }
     }
 
@@ -131,7 +133,7 @@ public class RecipePanelRenderer {
         cy += 1 + 3;
 
         if (panel.getScrollOffset() > 0) {
-            fr.drawString("\u25B2", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+            fr.drawString("▲", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
         }
         cy += 7;
 
@@ -139,14 +141,14 @@ public class RecipePanelRenderer {
     }
 
     private static void drawRecipeRow(int cx, int px, int ry, int pw, RecipeView recipe, boolean selected, int mouseX,
-        int mouseY, FontRenderer fr) {
+        int mouseY, FontRenderer fr, Minecraft mc) {
 
         boolean hovered = mouseX >= cx && mouseX < px + pw - PADDING && mouseY >= ry && mouseY < ry + RECIPE_ROW_H;
         if (selected) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_SEL);
         else if (hovered) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_HOV);
 
         ItemStack result = recipe.getRecipeOutput();
-        if (result != null) renderItem(result, cx, ry);
+        if (result != null) renderItem(result, cx, ry, mc);
 
         String name = (recipe.name == null || recipe.name.isEmpty()) && result != null ? result.getDisplayName()
             : (recipe.name != null ? recipe.name : "");
@@ -162,12 +164,14 @@ public class RecipePanelRenderer {
      * 选中配方的 4x4 合成格浮层。锚定在选中行（rowY）旁，方向自适应：行下方空间够则朝下展开，
      * 否则朝上展开，保证浮层始终在屏幕内、不被截断。浮层自带背景与边框，盖在列表之上。
      * 返回鼠标悬停的原料 ItemStack（用于 tooltip），无则 null。
+     *
+     * @param screenHeight GUI 高度，从外部传入避免每帧创建 ScaledResolution
      */
     private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int mouseX, int mouseY,
-        FontRenderer fr) {
+        FontRenderer fr, int screenHeight, Minecraft mc) {
 
         // 方向自适应：贴选中行下方，下方超屏则改贴上方（overlayY 与命中测试共用，保证一致）。
-        int oy = overlayY(rowY);
+        int oy = overlayY(rowY, screenHeight);
 
         int ox = px;
         drawRect(ox, oy, ox + pw, oy + OVERLAY_H, COLOR_OVERLAY_BG);
@@ -188,7 +192,7 @@ public class RecipePanelRenderer {
                 drawRect(gx, gy, gx + GRID_CELL, gy + GRID_CELL, 0xFF333333);
                 ItemStack ing = (row < rh && col < rw) ? recipe.getCraftingItem(row * rw + col) : null;
                 if (ing != null) {
-                    renderItem(ing, gx, gy);
+                    renderItem(ing, gx, gy, mc);
                     if (mouseX >= gx && mouseX < gx + GRID_CELL && mouseY >= gy && mouseY < gy + GRID_CELL) {
                         tooltipStack = ing;
                     }
@@ -227,17 +231,17 @@ public class RecipePanelRenderer {
         return y + CATEGORY_TAB_H;
     }
 
-    private static void drawCollapsedTab(int x, int y, int mouseX, int mouseY, RecipePanel panel) {
+    private static void drawCollapsedTab(int x, int y, int mouseX, int mouseY, RecipePanel panel, FontRenderer fr) {
         boolean hov = mouseX >= x && mouseX < x + COLLAPSE_BTN_W + 4 && mouseY >= y && mouseY < y + 20;
         drawRect(x, y, x + COLLAPSE_BTN_W + 4, y + 20, hov ? 0xCC444444 : COLOR_BG);
         drawBorder(x, y, COLLAPSE_BTN_W + 4, 20);
-        Minecraft.getMinecraft().fontRenderer.drawString(">", x + 3, y + 6, COLOR_TEXT);
+        fr.drawString(">", x + 3, y + 6, COLOR_TEXT);
     }
 
-    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, boolean collapsed) {
+    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, boolean collapsed, FontRenderer fr) {
         boolean hov = mouseX >= x && mouseX < x + COLLAPSE_BTN_W && mouseY >= y && mouseY < y + 12;
         drawRect(x, y, x + COLLAPSE_BTN_W, y + 12, hov ? 0xCC555555 : 0xCC333333);
-        Minecraft.getMinecraft().fontRenderer.drawString(collapsed ? ">" : "<", x + 2, y + 2, COLOR_TEXT);
+        fr.drawString(collapsed ? ">" : "<", x + 2, y + 2, COLOR_TEXT);
     }
 
     private static void drawBorder(int x, int y, int w, int h) {
@@ -251,26 +255,19 @@ public class RecipePanelRenderer {
         Gui.drawRect(x1, y1, x2, y2, color);
     }
 
-    private static void renderItem(ItemStack stack, int x, int y) {
+    private static void renderItem(ItemStack stack, int x, int y, Minecraft mc) {
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         RenderHelper.enableGUIStandardItemLighting();
         GL11.glEnable(GL12.GL_RESCALE_NORMAL);
-        itemRenderer.renderItemAndEffectIntoGUI(
-            Minecraft.getMinecraft().fontRenderer,
-            Minecraft.getMinecraft()
-                .getTextureManager(),
-            stack,
-            x,
-            y);
+        itemRenderer.renderItemAndEffectIntoGUI(mc.fontRenderer, mc.getTextureManager(), stack, x, y);
         RenderHelper.disableStandardItemLighting();
         GL11.glDisable(GL11.GL_DEPTH_TEST);
     }
 
     @SuppressWarnings("unchecked")
-    private static void drawItemTooltip(GuiScreen gui, ItemStack stack, int mouseX, int mouseY) {
-        List<String> tooltip = stack
-            .getTooltip(Minecraft.getMinecraft().thePlayer, Minecraft.getMinecraft().gameSettings.advancedItemTooltips);
-        TooltipHelper.drawHoveringText(gui, tooltip, mouseX, mouseY, Minecraft.getMinecraft().fontRenderer);
+    private static void drawItemTooltip(GuiScreen gui, ItemStack stack, int mouseX, int mouseY, Minecraft mc) {
+        List<String> tooltip = stack.getTooltip(mc.thePlayer, mc.gameSettings.advancedItemTooltips);
+        TooltipHelper.drawHoveringText(gui, tooltip, mouseX, mouseY, mc.fontRenderer);
     }
 
     // --- Hit testing helpers (used by GuiEventHandler) ---
@@ -330,18 +327,22 @@ public class RecipePanelRenderer {
         if (selIdx < 0) return false;
         int px = panel.getPanelX(guiLeft);
         int rowY = guiTop + LIST_BASE_OFFSET + selIdx * RECIPE_ROW_H;
-        int oy = overlayY(rowY);
+        // 使用 GuiScreen.height 而非创建 ScaledResolution
+        GuiScreen screen = Minecraft.getMinecraft().currentScreen;
+        int screenHeight = screen != null ? screen.height : 240; // 240 为降级默认值
+        int oy = overlayY(rowY, screenHeight);
         return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + OVERLAY_H;
     }
 
-    /** 浮层 Y 坐标：默认贴选中行下方，下方超屏则改贴上方。渲染与命中测试共用，保证一致。 */
-    private static int overlayY(int rowY) {
-        int screenH = new ScaledResolution(
-            Minecraft.getMinecraft(),
-            Minecraft.getMinecraft().displayWidth,
-            Minecraft.getMinecraft().displayHeight).getScaledHeight();
+    /**
+     * 浮层 Y 坐标：默认贴选中行下方，下方超屏则改贴上方。渲染与命中测试共用，保证一致。
+     *
+     * @param rowY         选中行的 Y 坐标
+     * @param screenHeight GUI 高度（从 GuiScreen.height 获取，避免创建 ScaledResolution）
+     */
+    private static int overlayY(int rowY, int screenHeight) {
         int oy = rowY + RECIPE_ROW_H;
-        if (oy + OVERLAY_H > screenH) oy = rowY - OVERLAY_H;
+        if (oy + OVERLAY_H > screenHeight) oy = rowY - OVERLAY_H;
         if (oy < 0) oy = 0;
         return oy;
     }

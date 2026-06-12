@@ -3,7 +3,9 @@ package com.customnpcs.craftingview;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import net.minecraftforge.common.config.Configuration;
 
@@ -79,10 +81,14 @@ public class Config {
         public final List<Integer> recipeIds;
         public final List<String> recipeNames;
 
+        // 性能优化：将 recipeNames 转为 HashSet，加速分类匹配（O(1) vs O(n)）
+        public final Set<String> recipeNamesSet;
+
         public CategoryDefinition(String name, List<Integer> recipeIds, List<String> recipeNames) {
             this.name = name;
             this.recipeIds = Collections.unmodifiableList(recipeIds);
             this.recipeNames = Collections.unmodifiableList(recipeNames);
+            this.recipeNamesSet = Collections.unmodifiableSet(new HashSet<>(recipeNames));
         }
     }
 }

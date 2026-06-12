@@ -35,3 +35,10 @@ addon.local.gradle.kts
 addon.late.local.gradle
 addon.late.local.gradle.kts
 layout.json
+
+npc_code/
+.trellis/
+.pi/
+.playwright-mcp/
+.mcp.json
+AGENTS.md
