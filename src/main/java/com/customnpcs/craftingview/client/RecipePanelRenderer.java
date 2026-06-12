@@ -14,11 +14,11 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
 import com.customnpcs.craftingview.Config.CategoryDefinition;
+import com.customnpcs.craftingview.compat.RecipeView;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
 import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
-import noppes.npcs.controllers.RecipeCarpentry;
 
 @SideOnly(Side.CLIENT)
 public class RecipePanelRenderer {
@@ -70,8 +70,8 @@ public class RecipePanelRenderer {
         }
 
         int pw = RecipePanel.PANEL_WIDTH;
-        List<RecipeCarpentry> visible = panel.getVisible();
-        RecipeCarpentry sel = panel.getSelectedRecipe();
+        List<RecipeView> visible = panel.getVisible();
+        RecipeView sel = panel.getSelectedRecipe();
 
         int ph = calcPanelHeight(visible, sel, panel);
         drawRect(px, py, px + pw, py + ph, COLOR_BG);
@@ -86,8 +86,8 @@ public class RecipePanelRenderer {
         // Recipe list — grid inserted inline after selected row
         ItemStack tooltipStack = null;
         for (int i = 0; i < visible.size(); i++) {
-            RecipeCarpentry recipe = visible.get(i);
-            boolean selected = recipe == sel;
+            RecipeView recipe = visible.get(i);
+            boolean selected = recipe.equals(sel);
             drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr);
             cy += RECIPE_ROW_H;
             if (selected) {
@@ -131,8 +131,8 @@ public class RecipePanelRenderer {
         return cy;
     }
 
-    private static void drawRecipeRow(int cx, int px, int ry, int pw, RecipeCarpentry recipe, boolean selected,
-        int mouseX, int mouseY, FontRenderer fr) {
+    private static void drawRecipeRow(int cx, int px, int ry, int pw, RecipeView recipe, boolean selected, int mouseX,
+        int mouseY, FontRenderer fr) {
 
         boolean hovered = mouseX >= cx && mouseX < px + pw - PADDING && mouseY >= ry && mouseY < ry + RECIPE_ROW_H;
         if (selected) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_SEL);
@@ -151,7 +151,7 @@ public class RecipePanelRenderer {
         fr.drawString("+", btnX + 2, ry + 4, COLOR_TEXT);
     }
 
-    private static ItemStack drawIngredientGrid(int cx, int cy, RecipeCarpentry recipe, int mouseX, int mouseY,
+    private static ItemStack drawIngredientGrid(int cx, int cy, RecipeView recipe, int mouseX, int mouseY,
         FontRenderer fr) {
 
         fr.drawString("Recipe:", cx, cy, COLOR_TEXT_DIM);
@@ -177,11 +177,11 @@ public class RecipePanelRenderer {
         return tooltipStack;
     }
 
-    private static int calcPanelHeight(List<RecipeCarpentry> visible, RecipeCarpentry sel, RecipePanel panel) {
+    private static int calcPanelHeight(List<RecipeView> visible, RecipeView sel, RecipePanel panel) {
         int h = LIST_BASE_OFFSET;
-        for (RecipeCarpentry recipe : visible) {
+        for (RecipeView recipe : visible) {
             h += RECIPE_ROW_H;
-            if (recipe == sel) h += GRID_BLOCK_H;
+            if (recipe.equals(sel)) h += GRID_BLOCK_H;
         }
         boolean canScrollDown = panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage();
         if (canScrollDown) h += 10;
@@ -285,8 +285,8 @@ public class RecipePanelRenderer {
     public static int getRecipeRowHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
         int px = panel.getPanelX(guiLeft);
         int cx = px + PADDING;
-        List<RecipeCarpentry> visible = panel.getVisible();
-        RecipeCarpentry sel = panel.getSelectedRecipe();
+        List<RecipeView> visible = panel.getVisible();
+        RecipeView sel = panel.getSelectedRecipe();
         for (int i = 0; i < visible.size(); i++) {
             int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, i);
             if (mx >= cx && mx < px + RecipePanel.PANEL_WIDTH - PADDING && my >= ry && my < ry + RECIPE_ROW_H) return i;
@@ -296,8 +296,8 @@ public class RecipePanelRenderer {
 
     public static boolean isPlusButtonHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my, int rowIndex) {
         int px = panel.getPanelX(guiLeft);
-        List<RecipeCarpentry> visible = panel.getVisible();
-        RecipeCarpentry sel = panel.getSelectedRecipe();
+        List<RecipeView> visible = panel.getVisible();
+        RecipeView sel = panel.getSelectedRecipe();
         int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, rowIndex);
         int btnX = px + RecipePanel.PANEL_WIDTH - PADDING - 12;
         return mx >= btnX && mx < btnX + 10 && my >= ry + 3 && my < ry + 13;
@@ -314,11 +314,12 @@ public class RecipePanelRenderer {
     }
 
     /** 计算第 targetIndex 行的起始 Y 坐标，考虑选中行展开的额外高度 */
-    private static int getRowY(int baseY, List<RecipeCarpentry> visible, RecipeCarpentry sel, int targetIndex) {
+    private static int getRowY(int baseY, List<RecipeView> visible, RecipeView sel, int targetIndex) {
         int cy = baseY;
         for (int i = 0; i < targetIndex; i++) {
             cy += RECIPE_ROW_H;
-            if (visible.get(i) == sel) cy += GRID_BLOCK_H;
+            if (visible.get(i)
+                .equals(sel)) cy += GRID_BLOCK_H;
         }
         return cy;
     }

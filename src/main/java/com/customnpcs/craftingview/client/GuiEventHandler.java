@@ -12,6 +12,8 @@ import net.minecraftforge.client.event.GuiScreenEvent;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
+import com.customnpcs.craftingview.compat.RecipeAccess;
+import com.customnpcs.craftingview.compat.RecipeView;
 import com.customnpcs.craftingview.network.PacketFillCraftingGrid;
 import com.customnpcs.craftingview.network.PacketHandler;
 
@@ -23,7 +25,6 @@ import cpw.mods.fml.relauncher.SideOnly;
 import noppes.npcs.client.gui.player.GuiNpcCarpentryBench;
 import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
 import noppes.npcs.containers.ContainerCarpentryBench;
-import noppes.npcs.controllers.RecipeCarpentry;
 
 @SideOnly(Side.CLIENT)
 public class GuiEventHandler {
@@ -47,7 +48,7 @@ public class GuiEventHandler {
     public void onGuiOpen(GuiOpenEvent event) {
         if (event.gui instanceof GuiNpcCarpentryBench) {
             GuiContainer guiContainer = (GuiContainer) event.gui;
-            if (guiContainer.inventorySlots instanceof ContainerCarpentryBench) {
+            if (RecipeAccess.isAvailable() && guiContainer.inventorySlots instanceof ContainerCarpentryBench) {
                 ContainerCarpentryBench container = (ContainerCarpentryBench) guiContainer.inventorySlots;
                 boolean isAnvil = container.getMetadata() >= 4;
                 activePanel = new RecipePanel(isAnvil);
@@ -123,13 +124,13 @@ public class GuiEventHandler {
         // Recipe row / "+" button
         int rowIdx = RecipePanelRenderer.getRecipeRowHit(activePanel, guiLeft, guiTop, mx, my);
         if (rowIdx >= 0) {
-            List<RecipeCarpentry> visible = activePanel.getVisible();
+            List<RecipeView> visible = activePanel.getVisible();
             if (rowIdx < visible.size()) {
-                RecipeCarpentry recipe = visible.get(rowIdx);
+                RecipeView recipe = visible.get(rowIdx);
                 if (RecipePanelRenderer.isPlusButtonHit(activePanel, guiLeft, guiTop, mx, my, rowIdx)) {
                     playClickSound();
                     PacketHandler.CHANNEL.sendToServer(new PacketFillCraftingGrid(recipe.id));
-                } else if (recipe == activePanel.getSelectedRecipe()) {
+                } else if (recipe.equals(activePanel.getSelectedRecipe())) {
                     playClickSound();
                     activePanel.selectRecipe(null);
                 } else {

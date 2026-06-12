@@ -3,6 +3,8 @@ package com.customnpcs.craftingview;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.customnpcs.craftingview.compat.RecipeAccess;
+
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -27,6 +29,7 @@ public class CraftingViewMod {
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         Config.load(event.getSuggestedConfigurationFile());
+        RecipeAccess.init();
     }
 
     @Mod.EventHandler

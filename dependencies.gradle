@@ -35,7 +35,13 @@
  */
 dependencies {
     //runtimeOnlyNonPublishable("com.github.GTNewHorizons:NotEnoughItems:2.7.69-GTNH:dev")
-    def customNpcs = rfg.deobf(files("libs/CustomNPCs_1.7.10d(29oct17).jar"))
+    // 宿主切换：默认原版 CustomNPCs，-Pcnpcplus 切到 CustomNPC+。
+    // 改造后源码不再直接 import RecipeCarpentry（仅以字符串 FQN 出现在 compat 反射层），
+    // 编译期不强依赖该类，任一宿主 jar 都能编译；两者均不打进产物，最终单 jar 双兼容。
+    def hostJar = project.hasProperty("cnpcplus")
+        ? "libs/CustomNPC-Plus-1.11.1.jar"
+        : "libs/CustomNPCs_1.7.10d(29oct17).jar"
+    def customNpcs = rfg.deobf(files(hostJar))
     compileOnly(customNpcs)
     runtimeOnlyNonPublishable(customNpcs)
 }

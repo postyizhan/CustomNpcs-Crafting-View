@@ -8,11 +8,11 @@ import net.minecraft.client.gui.GuiTextField;
 
 import com.customnpcs.craftingview.Config;
 import com.customnpcs.craftingview.Config.CategoryDefinition;
+import com.customnpcs.craftingview.compat.RecipeAccess;
+import com.customnpcs.craftingview.compat.RecipeView;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
-import noppes.npcs.controllers.RecipeCarpentry;
-import noppes.npcs.controllers.RecipeController;
 
 @SideOnly(Side.CLIENT)
 public class RecipePanel {
@@ -27,13 +27,13 @@ public class RecipePanel {
         new ArrayList<>());
 
     private final boolean isAnvil;
-    private final List<RecipeCarpentry> allRecipes = new ArrayList<>();
-    private final List<RecipeCarpentry> filtered = new ArrayList<>();
+    private final List<RecipeView> allRecipes = new ArrayList<>();
+    private final List<RecipeView> filtered = new ArrayList<>();
     private final List<CategoryDefinition> categories = new ArrayList<>();
 
     private boolean collapsed = false;
     private int scrollOffset = 0;
-    private RecipeCarpentry selectedRecipe = null;
+    private RecipeView selectedRecipe = null;
     private int activeCategoryIndex = 0;
 
     public GuiTextField searchField;
@@ -41,9 +41,7 @@ public class RecipePanel {
     public RecipePanel(boolean isAnvil) {
         this.isAnvil = isAnvil;
 
-        if (RecipeController.instance != null) {
-            allRecipes.addAll(RecipeController.instance.anvilRecipes.values());
-        }
+        allRecipes.addAll(RecipeAccess.getAllCarpentryRecipes());
 
         // Build category list: Browse All + config categories
         categories.add(BROWSE_ALL);
@@ -64,7 +62,7 @@ public class RecipePanel {
         CategoryDefinition cat = categories.get(activeCategoryIndex);
 
         filtered.clear();
-        for (RecipeCarpentry recipe : allRecipes) {
+        for (RecipeView recipe : allRecipes) {
             if (!matchesCategory(recipe, cat)) continue;
             if (!query.isEmpty() && !matchesSearch(recipe, query)) continue;
             filtered.add(recipe);
@@ -75,7 +73,7 @@ public class RecipePanel {
         if (scrollOffset > maxScroll) scrollOffset = maxScroll;
     }
 
-    private boolean matchesCategory(RecipeCarpentry recipe, CategoryDefinition cat) {
+    private boolean matchesCategory(RecipeView recipe, CategoryDefinition cat) {
         if (cat == BROWSE_ALL || (cat.recipeIds.isEmpty() && cat.recipeNames.isEmpty())) return true;
         if (cat.recipeIds.contains(recipe.id)) return true;
         if (recipe.name != null) {
@@ -87,7 +85,7 @@ public class RecipePanel {
         return false;
     }
 
-    private boolean matchesSearch(RecipeCarpentry recipe, String query) {
+    private boolean matchesSearch(RecipeView recipe, String query) {
         if (recipe.name != null && recipe.name.toLowerCase()
             .contains(query)) return true;
         if (recipe.getRecipeOutput() != null) {
@@ -99,7 +97,7 @@ public class RecipePanel {
         return false;
     }
 
-    public List<RecipeCarpentry> getVisible() {
+    public List<RecipeView> getVisible() {
         int end = Math.min(scrollOffset + RECIPES_PER_PAGE, filtered.size());
         return filtered.subList(scrollOffset, end);
     }
@@ -129,7 +127,7 @@ public class RecipePanel {
         }
     }
 
-    public void selectRecipe(RecipeCarpentry recipe) {
+    public void selectRecipe(RecipeView recipe) {
         selectedRecipe = recipe;
     }
 
@@ -141,7 +139,7 @@ public class RecipePanel {
         return collapsed;
     }
 
-    public RecipeCarpentry getSelectedRecipe() {
+    public RecipeView getSelectedRecipe() {
         return selectedRecipe;
     }
 
