@@ -2,30 +2,47 @@ name: Publish to Modrinth
 
 on:
   push:
-    branches: [ '1.7.10', '1.7.10-cnpcplus' ]
+    branches: [ '1.7.10' ]
+
+# Single dual-compatible jar (original CustomNPCs + CustomNPC+). Every push to 1.7.10
+# auto-publishes a Modrinth version named "{mcVersion}-{shortHash}", e.g. 1.7.10-8a4f47e.
+# Re-pushing the same commit is skipped (Modrinth rejects duplicate version_number).
 
 jobs:
-  check-and-publish:
+  publish:
     runs-on: ubuntu-latest
-    # Only run when commit message contains [release x.y.z]
-    if: contains(github.event.head_commit.message, '[release')
 
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Extract version from commit message
+      - name: Compute version (mcVersion-shortHash)
         id: version
         run: |
-          MSG="${{ github.event.head_commit.message }}"
-          VERSION=$(echo "$MSG" | grep -oP '(?<=\[release )[^\]]+')
-          if [ -z "$VERSION" ]; then
-            echo "No version found in commit message, skipping."
-            exit 1
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          MC_VERSION=$(grep -oP '(?<=^minecraftVersion\s=\s).+' gradle.properties | tr -d '[:space:]')
+          SHORT_HASH=$(git rev-parse --short HEAD)
+          VERSION="${MC_VERSION}-${SHORT_HASH}"
+          echo "mc_version=$MC_VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=$VERSION" >> $GITHUB_OUTPUT
           echo "Publishing version: $VERSION"
 
+      - name: Skip if version already exists on Modrinth
+        id: dup
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          VERSION_NUMBER: ${{ steps.version.outputs.version_number }}
+        run: |
+          EXISTING=$(curl -s -H "Authorization: $MODRINTH_TOKEN" \
+            "https://api.modrinth.com/v2/project/5skiXDDB/version" \
+            | python3 -c "import json,sys,os; vs=json.load(sys.stdin); print(any(v['version_number']==os.environ['VERSION_NUMBER'] for v in vs))")
+          if [ "$EXISTING" = "True" ]; then
+            echo "Version $VERSION_NUMBER already published, skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up JDK 25
+        if: steps.dup.outputs.skip == 'false'
         uses: actions/setup-java@v4.7.0
         with:
           java-version: '25'
@@ -33,31 +50,30 @@ jobs:
           cache: gradle
 
       - name: Build
+        if: steps.dup.outputs.skip == 'false'
         run: |
           chmod +x gradlew
           ./gradlew build
 
-      - name: Find jar
+      - name: Find and rename jar (tag MC version)
+        if: steps.dup.outputs.skip == 'false'
         id: jar
+        env:
+          VERSION_NUMBER: ${{ steps.version.outputs.version_number }}
         run: |
-          JAR=$(ls build/libs/*.jar | grep -v '\-dev\.' | grep -v '\-sources\.' | head -1)
-          echo "path=$JAR" >> $GITHUB_OUTPUT
-          echo "Found jar: $JAR"
-
-      - name: Determine branch variant
-        id: variant
-        run: |
-          BRANCH="${{ github.ref_name }}"
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "name=$BRANCH" >> $GITHUB_OUTPUT
-          echo "version_number=${VERSION}-${BRANCH}" >> $GITHUB_OUTPUT
+          RAW=$(ls build/libs/*.jar | grep -v '\-dev\.' | grep -v '\-sources\.' | head -1)
+          OUT="build/libs/customnpcs_crafting_view-${VERSION_NUMBER}.jar"
+          cp "$RAW" "$OUT"
+          echo "path=$OUT" >> $GITHUB_OUTPUT
+          echo "Publishing jar: $OUT"
 
       - name: Publish to Modrinth
+        if: steps.dup.outputs.skip == 'false'
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           CHANGELOG: ${{ github.event.head_commit.message }}
-          VERSION_NUMBER: ${{ steps.variant.outputs.version_number }}
-          VERSION_NAME: ${{ steps.variant.outputs.version_number }}
+          VERSION_NUMBER: ${{ steps.version.outputs.version_number }}
+          GAME_VERSION: ${{ steps.version.outputs.mc_version }}
         run: |
           JAR="${{ steps.jar.outputs.path }}"
           DATA=$(python3 -c "
@@ -65,9 +81,9 @@ jobs:
           print(json.dumps({
             'project_id': '5skiXDDB',
             'version_number': os.environ['VERSION_NUMBER'],
-            'name': os.environ['VERSION_NAME'],
+            'name': os.environ['VERSION_NUMBER'],
             'version_type': 'release',
-            'game_versions': ['1.7.10'],
+            'game_versions': [os.environ['GAME_VERSION']],
             'loaders': ['forge'],
             'changelog': os.environ['CHANGELOG'],
             'dependencies': [{'project_id': 'ptXUpAzg', 'dependency_type': 'required'}],
