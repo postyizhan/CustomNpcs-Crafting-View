@@ -28,7 +28,6 @@ public class GuiCarpentryBenchWrapper extends noppes.npcs.client.gui.player.GuiN
     @Override
     public void func_73863_a(int mouseX, int mouseY, float partialTick) {
         super.func_73863_a(mouseX, mouseY, partialTick);
-        panel.syncSearchField();
         RecipePanelRenderer.render(this, panel, mouseX, mouseY);
         handleMouseInput(mouseX, mouseY);
         handleKeyInput();
@@ -65,9 +64,11 @@ public class GuiCarpentryBenchWrapper extends noppes.npcs.client.gui.player.GuiN
 
         if (panel.isCollapsed()) return;
 
+        // Clicks inside the floating overlay are consumed here, not passed through to rows beneath.
+        if (RecipePanelRenderer.isOverlayHit(panel, guiLeft, guiTop, mx, my)) return;
+
         if (panel.searchField != null) {
             panel.searchField.mouseClicked(mx, my, 0);
-            panel.syncSearchField();
         }
 
         int catIdx = RecipePanelRenderer.getCategoryTabHit(panel, guiLeft, guiTop, mx, my);
@@ -104,7 +105,6 @@ public class GuiCarpentryBenchWrapper extends noppes.npcs.client.gui.player.GuiN
             if (Keyboard.getEventKeyState()) {
                 if (panel.searchField != null) {
                     panel.searchField.textboxKeyTyped(Keyboard.getEventCharacter(), Keyboard.getEventKey());
-                    panel.syncSearchField();
                     panel.rebuildFiltered();
                 }
             }

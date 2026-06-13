@@ -6,7 +6,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
@@ -18,7 +17,6 @@ import com.customnpcs.craftingview.Config.CategoryDefinition;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
-import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
 import noppes.npcs.controllers.RecipeCarpentry;
 
 @SideOnly(Side.CLIENT)
@@ -41,6 +39,7 @@ public class RecipePanelRenderer {
     private static final int COLOR_TEXT_DIM = 0xFFAAAAAA;
     private static final int COLOR_PLUS_BTN = 0xFF336633;
     private static final int COLOR_PLUS_HOV = 0xFF44AA44;
+    private static final int COLOR_OVERLAY_BG = 0xF0202020;
 
     private static final RenderItem itemRenderer = new RenderItem();
 
@@ -55,13 +54,14 @@ public class RecipePanelRenderer {
 
     public static void render(GuiScreen gui, RecipePanel panel, int guiLeft, int guiTop, int mouseX, int mouseY) {
 
+        Minecraft mc = Minecraft.getMinecraft();
+        FontRenderer fr = mc.fontRenderer;
+
         int px = panel.getPanelX(guiLeft);
         int py = guiTop;
 
-        FontRenderer fr = Minecraft.getMinecraft().fontRenderer;
-
         if (panel.isCollapsed()) {
-            drawCollapsedTab(guiLeft - COLLAPSE_BTN_W - 8, py, mouseX, mouseY);
+            drawCollapsedTab(guiLeft - COLLAPSE_BTN_W - 8, py, mouseX, mouseY, fr);
             return;
         }
 
@@ -69,39 +69,47 @@ public class RecipePanelRenderer {
         List visible = panel.getVisible();
         RecipeCarpentry sel = panel.getSelectedRecipe();
 
-        int ph = calcPanelHeight(visible, sel, panel);
+        int ph = calcPanelHeight(panel);
         drawRect(px, py, px + pw, py + ph, COLOR_BG);
         drawBorder(px, py, pw, ph);
 
         int cx = px + PADDING;
         int cy = py + PADDING;
 
-        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false);
+        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false, fr);
         cy = drawHeader(cx, px, cy, pw, panel, mouseX, mouseY, fr);
 
-        // Recipe list — grid inserted inline after selected row
+        // Recipe list — fixed-height rows, no inline push. The selected recipe's grid is drawn
+        // afterwards as a floating overlay so list layout never shifts and the grid never overflows.
         ItemStack tooltipStack = null;
+        int listTop = cy;
         for (int i = 0; i < visible.size(); i++) {
             RecipeCarpentry recipe = (RecipeCarpentry) visible.get(i);
             boolean selected = recipe == sel;
-            ItemStack rowTooltip = drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr);
+            ItemStack rowTooltip = drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr, mc);
             if (rowTooltip != null) tooltipStack = rowTooltip;
-
             cy += RECIPE_ROW_H;
-            if (selected) {
-                int gridSize = panel.isWorkbenchSource() ? 3 : 4;
-                ItemStack gridTooltip = drawIngredientGrid(cx, cy, recipe, gridSize, mouseX, mouseY, fr);
-                if (gridTooltip != null) tooltipStack = gridTooltip;
-                cy += getGridBlockHeight(panel);
-            }
         }
 
         if (panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage()) {
-            fr.drawString("\u25BC", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+            fr.drawString("▼", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+        }
+
+        // Floating ingredient grid for the selected recipe, anchored to its row; direction adaptive.
+        int selIdx = panel.getSelectedVisibleIndex();
+        if (selIdx >= 0 && sel != null) {
+            int rowY = listTop + selIdx * RECIPE_ROW_H;
+            int oy = overlayY(rowY, gui.height, panel);
+            ItemStack overlayTip = drawIngredientOverlay(px, pw, oy, sel, mouseX, mouseY, fr, panel, mc);
+            // Overlay sits on top of the list: when the cursor is within it, its hover result (which
+            // may be null over empty space) wins, so row tooltips beneath are not shown through it.
+            if (mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + overlayHeight(panel)) {
+                tooltipStack = overlayTip;
+            }
         }
 
         if (tooltipStack != null) {
-            drawItemTooltip(gui, tooltipStack, mouseX, mouseY);
+            drawItemTooltip(gui, tooltipStack, mouseX, mouseY, mc);
         }
     }
 
@@ -111,8 +119,9 @@ public class RecipePanelRenderer {
         fr.drawString(panel.isWorkbenchSource() ? "Workbench" : (panel.isAnvil() ? "Anvil" : "Carpentry"), cx, cy, COLOR_TEXT);
         cy += 10;
 
-        GuiTextField tf = panel.buildSearchField(cx, cy);
-        tf.drawTextBox();
+        // Persistent search field — created/repositioned only when needed, not allocated per frame.
+        panel.ensureSearchField(cx, cy);
+        panel.searchField.drawTextBox();
         cy += SEARCH_FIELD_H + 3;
 
         cy = drawCategoryTabs(cx, cy, pw - PADDING * 2, panel, mouseX, mouseY, fr);
@@ -122,7 +131,7 @@ public class RecipePanelRenderer {
         cy += 1 + 3;
 
         if (panel.getScrollOffset() > 0) {
-            fr.drawString("\u25B2", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
+            fr.drawString("▲", px + pw / 2 - 3, cy, COLOR_TEXT_DIM);
         }
         cy += 7;
 
@@ -130,7 +139,7 @@ public class RecipePanelRenderer {
     }
 
     private static ItemStack drawRecipeRow(int cx, int px, int ry, int pw, RecipeCarpentry recipe,
-        boolean selected, int mouseX, int mouseY, FontRenderer fr) {
+        boolean selected, int mouseX, int mouseY, FontRenderer fr, Minecraft mc) {
 
         boolean hovered = mouseX >= cx && mouseX < px + pw - PADDING && mouseY >= ry && mouseY < ry + RECIPE_ROW_H;
         if (selected) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_SEL);
@@ -139,7 +148,7 @@ public class RecipePanelRenderer {
         ItemStack tooltipStack = null;
         ItemStack result = recipe.recipeOutput;
         if (result != null) {
-            renderItem(result, cx, ry);
+            renderItem(result, cx, ry, mc);
             if (mouseX >= cx && mouseX < cx + 16 && mouseY >= ry && mouseY < ry + 16) {
                 tooltipStack = result;
             }
@@ -157,13 +166,26 @@ public class RecipePanelRenderer {
         return tooltipStack;
     }
 
-    private static ItemStack drawIngredientGrid(int cx, int cy, RecipeCarpentry recipe, int gridSize,
-        int mouseX, int mouseY, FontRenderer fr) {
+    /**
+     * Floating 3x3/4x4 ingredient grid for the selected recipe, drawn on top of the list with its
+     * own background + border. Anchored at oy (computed by {@link #overlayY}). Returns the ItemStack
+     * the cursor hovers (for tooltip), or null.
+     */
+    private static ItemStack drawIngredientOverlay(int px, int pw, int oy, RecipeCarpentry recipe,
+        int mouseX, int mouseY, FontRenderer fr, RecipePanel panel, Minecraft mc) {
 
+        int ox = px;
+        int oh = overlayHeight(panel);
+        drawRect(ox, oy, ox + pw, oy + oh, COLOR_OVERLAY_BG);
+        drawBorder(ox, oy, pw, oh);
+
+        int cx = ox + PADDING;
+        int cy = oy + PADDING;
         fr.drawString("Recipe:", cx, cy, COLOR_TEXT_DIM);
         cy += 10;
 
         ItemStack tooltipStack = null;
+        int gridSize = panel.isWorkbenchSource() ? 3 : 4;
         int rw = recipe.recipeWidth;
         int rh = recipe.recipeHeight;
         for (int row = 0; row < gridSize; row++) {
@@ -173,7 +195,7 @@ public class RecipePanelRenderer {
                 drawRect(gx, gy, gx + GRID_CELL, gy + GRID_CELL, 0xFF333333);
                 ItemStack ing = (row < rh && col < rw) ? recipe.getCraftingItem(row * rw + col) : null;
                 if (ing != null) {
-                    renderItem(ing, gx, gy);
+                    renderItem(ing, gx, gy, mc);
                     if (mouseX >= gx && mouseX < gx + GRID_CELL && mouseY >= gy && mouseY < gy + GRID_CELL) {
                         tooltipStack = ing;
                     }
@@ -183,12 +205,9 @@ public class RecipePanelRenderer {
         return tooltipStack;
     }
 
-    static int calcPanelHeight(List visible, RecipeCarpentry sel, RecipePanel panel) {
+    static int calcPanelHeight(RecipePanel panel) {
         int h = LIST_BASE_OFFSET;
-        for (int i = 0; i < visible.size(); i++) {
-            h += RECIPE_ROW_H;
-            if (visible.get(i) == sel) h += getGridBlockHeight(panel);
-        }
+        h += panel.getVisible().size() * RECIPE_ROW_H;
         boolean canScrollDown = panel.getFilteredSize() > panel.getScrollOffset() + panel.getVisiblePerPage();
         if (canScrollDown) h += 10;
         return h + PADDING;
@@ -210,17 +229,17 @@ public class RecipePanelRenderer {
         return y + CATEGORY_TAB_H;
     }
 
-    private static void drawCollapsedTab(int x, int y, int mouseX, int mouseY) {
+    private static void drawCollapsedTab(int x, int y, int mouseX, int mouseY, FontRenderer fr) {
         boolean hov = mouseX >= x && mouseX < x + COLLAPSE_BTN_W + 4 && mouseY >= y && mouseY < y + 20;
         drawRect(x, y, x + COLLAPSE_BTN_W + 4, y + 20, hov ? 0xCC444444 : COLOR_BG);
         drawBorder(x, y, COLLAPSE_BTN_W + 4, 20);
-        Minecraft.getMinecraft().fontRenderer.drawString(">", x + 3, y + 6, COLOR_TEXT);
+        fr.drawString(">", x + 3, y + 6, COLOR_TEXT);
     }
 
-    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, boolean collapsed) {
+    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, boolean collapsed, FontRenderer fr) {
         boolean hov = mouseX >= x && mouseX < x + COLLAPSE_BTN_W && mouseY >= y && mouseY < y + 12;
         drawRect(x, y, x + COLLAPSE_BTN_W, y + 12, hov ? 0xCC555555 : 0xCC333333);
-        Minecraft.getMinecraft().fontRenderer.drawString(collapsed ? ">" : "<", x + 2, y + 2, COLOR_TEXT);
+        fr.drawString(collapsed ? ">" : "<", x + 2, y + 2, COLOR_TEXT);
     }
 
     private static void drawBorder(int x, int y, int w, int h) {
@@ -234,23 +253,18 @@ public class RecipePanelRenderer {
         Gui.drawRect(x1, y1, x2, y2, color);
     }
 
-    private static void renderItem(ItemStack stack, int x, int y) {
+    private static void renderItem(ItemStack stack, int x, int y, Minecraft mc) {
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         RenderHelper.enableGUIStandardItemLighting();
         GL11.glEnable(GL12.GL_RESCALE_NORMAL);
-        itemRenderer.renderItemAndEffectIntoGUI(
-            Minecraft.getMinecraft().fontRenderer,
-            Minecraft.getMinecraft().getTextureManager(),
-            stack, x, y);
+        itemRenderer.renderItemAndEffectIntoGUI(mc.fontRenderer, mc.getTextureManager(), stack, x, y);
         RenderHelper.disableStandardItemLighting();
         GL11.glDisable(GL11.GL_DEPTH_TEST);
     }
 
-    private static void drawItemTooltip(GuiScreen gui, ItemStack stack, int mouseX, int mouseY) {
-        List tooltip = stack.getTooltip(
-            Minecraft.getMinecraft().thePlayer,
-            Minecraft.getMinecraft().gameSettings.advancedItemTooltips);
-        TooltipHelper.drawHoveringText(gui, tooltip, mouseX, mouseY, Minecraft.getMinecraft().fontRenderer);
+    private static void drawItemTooltip(GuiScreen gui, ItemStack stack, int mouseX, int mouseY, Minecraft mc) {
+        List tooltip = stack.getTooltip(mc.thePlayer, mc.gameSettings.advancedItemTooltips);
+        TooltipHelper.drawHoveringText(gui, tooltip, mouseX, mouseY, mc.fontRenderer);
     }
 
     // --- Hit testing ---
@@ -281,22 +295,12 @@ public class RecipePanelRenderer {
         return -1;
     }
 
-    private static int getRowY(int baseY, List visible, RecipeCarpentry sel, RecipePanel panel, int targetIndex) {
-        int cy = baseY;
-        for (int i = 0; i < targetIndex; i++) {
-            cy += RECIPE_ROW_H;
-            if (visible.get(i) == sel) cy += getGridBlockHeight(panel);
-        }
-        return cy;
-    }
-
     public static int getRecipeRowHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
         int px = panel.getPanelX(guiLeft);
         int cx = px + PADDING;
-        List visible = panel.getVisible();
-        RecipeCarpentry sel = panel.getSelectedRecipe();
-        for (int i = 0; i < visible.size(); i++) {
-            int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, panel, i);
+        int visibleCount = panel.getVisible().size();
+        for (int i = 0; i < visibleCount; i++) {
+            int ry = guiTop + LIST_BASE_OFFSET + i * RECIPE_ROW_H;
             if (mx >= cx && mx < px + RecipePanel.PANEL_WIDTH - PADDING
                 && my >= ry && my < ry + RECIPE_ROW_H) return i;
         }
@@ -305,9 +309,7 @@ public class RecipePanelRenderer {
 
     public static boolean isPlusButtonHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my, int rowIndex) {
         int px = panel.getPanelX(guiLeft);
-        List visible = panel.getVisible();
-        RecipeCarpentry sel = panel.getSelectedRecipe();
-        int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, panel, rowIndex);
+        int ry = guiTop + LIST_BASE_OFFSET + rowIndex * RECIPE_ROW_H;
         int btnX = px + RecipePanel.PANEL_WIDTH - PADDING - 12;
         return mx >= btnX && mx < btnX + 10 && my >= ry + 3 && my < ry + 13;
     }
@@ -317,6 +319,39 @@ public class RecipePanelRenderer {
         return 10 + gridSize * (GRID_CELL + 1) + PADDING;
     }
 
+    /** Total height of the floating overlay (top pad + label + grid + bottom pad). */
+    private static int overlayHeight(RecipePanel panel) {
+        return PADDING + getGridBlockHeight(panel);
+    }
+
+    /**
+     * Overlay Y: default just below the selected row; if that overflows the screen bottom, flip to
+     * above the row. Shared by render and {@link #isOverlayHit} so both agree.
+     */
+    private static int overlayY(int rowY, int screenHeight, RecipePanel panel) {
+        int oh = overlayHeight(panel);
+        int oy = rowY + RECIPE_ROW_H;
+        if (oy + oh > screenHeight) oy = rowY - oh;
+        if (oy < 0) oy = 0;
+        return oy;
+    }
+
+    /**
+     * Whether the selected-recipe overlay currently covers (mx, my). Lets click handling consume
+     * clicks inside the overlay so they don't fall through to the list rows beneath it.
+     */
+    public static boolean isOverlayHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
+        if (panel.isCollapsed()) return false;
+        int selIdx = panel.getSelectedVisibleIndex();
+        if (selIdx < 0) return false;
+        int px = panel.getPanelX(guiLeft);
+        int rowY = guiTop + LIST_BASE_OFFSET + selIdx * RECIPE_ROW_H;
+        GuiScreen screen = Minecraft.getMinecraft().currentScreen;
+        int screenHeight = screen != null ? screen.height : 240;
+        int oy = overlayY(rowY, screenHeight, panel);
+        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + overlayHeight(panel);
+    }
+
     public static boolean isPanelHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
         if (panel.isCollapsed()) {
             int x = guiLeft - 4 - COLLAPSE_BTN_W;
@@ -324,7 +359,7 @@ public class RecipePanelRenderer {
         }
         int px = panel.getPanelX(guiLeft);
         int py = guiTop;
-        int ph = calcPanelHeight(panel.getVisible(), panel.getSelectedRecipe(), panel);
+        int ph = calcPanelHeight(panel);
         return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= py && my < py + ph;
     }
 }

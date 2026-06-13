@@ -35,6 +35,12 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
     private final RecipePanel panel;
     private boolean lastLeftDown = false;
 
+    // Twilight cost accessor methods (foreign API) resolved once via reflection, then cached —
+    // avoids a getMethod() lookup every frame in drawGuiContainerBackgroundLayer.
+    private Method mUncraftCost;
+    private Method mRecraftCost;
+    private boolean costMethodsResolved = false;
+
     public GuiTwilightUncraftingWrapper(Container container) {
         super(container);
         this.panel = new RecipePanel(false, RecipePanel.SOURCE_WORKBENCH);
@@ -53,7 +59,6 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTick) {
         super.drawScreen(mouseX, mouseY, partialTick);
-        panel.syncSearchField();
         RecipePanelRenderer.render(this, panel, this.guiLeft, this.guiTop, mouseX, mouseY);
         handleMouseInput(mouseX, mouseY);
         handleKeyInput();
@@ -88,8 +93,9 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
 
         FontRenderer fr = this.mc.fontRenderer;
         RenderHelper.disableStandardItemLighting();
-        drawCost(getContainerCost("getUncraftingCost"), frameX + 48, frameY + 38, fr);
-        drawCost(getContainerCost("getRecraftingCost"), frameX + 130, frameY + 38, fr);
+        resolveCostMethods();
+        drawCost(getContainerCost(mUncraftCost), frameX + 48, frameY + 38, fr);
+        drawCost(getContainerCost(mRecraftCost), frameX + 130, frameY + 38, fr);
     }
 
     private void drawSlotAsBackground(Slot backgroundSlot, Slot appearSlot) {
@@ -113,13 +119,29 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         this.zLevel = 0.0F;
     }
 
-    private int getContainerCost(String methodName) {
+    private void resolveCostMethods() {
+        if (costMethodsResolved) return;
+        costMethodsResolved = true;
+        Class cls = this.inventorySlots.getClass();
+        mUncraftCost = resolveCostMethod(cls, "getUncraftingCost");
+        mRecraftCost = resolveCostMethod(cls, "getRecraftingCost");
+    }
+
+    private Method resolveCostMethod(Class cls, String methodName) {
         try {
-            Method method = this.inventorySlots.getClass().getMethod(methodName, new Class[0]);
+            return cls.getMethod(methodName, new Class[0]);
+        } catch (Exception e) {
+            CraftingViewMod.LOG.fine("Twilight cost method unavailable: " + methodName);
+            return null;
+        }
+    }
+
+    private int getContainerCost(Method method) {
+        if (method == null) return 0;
+        try {
             Object value = method.invoke(this.inventorySlots, new Object[0]);
             return value instanceof Integer ? ((Integer)value).intValue() : 0;
         } catch (Exception e) {
-            CraftingViewMod.LOG.fine("Twilight cost method unavailable: " + methodName);
             return 0;
         }
     }
@@ -161,9 +183,11 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         }
         if (panel.isCollapsed()) return;
 
+        // Clicks inside the floating overlay are consumed here, not passed through to rows beneath.
+        if (RecipePanelRenderer.isOverlayHit(panel, guiLeft, guiTop, mx, my)) return;
+
         if (panel.searchField != null) {
             panel.searchField.mouseClicked(mx, my, 0);
-            panel.syncSearchField();
         }
 
         int catIdx = RecipePanelRenderer.getCategoryTabHit(panel, guiLeft, guiTop, mx, my);
@@ -199,7 +223,6 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         while (Keyboard.next()) {
             if (Keyboard.getEventKeyState() && panel.searchField != null) {
                 panel.searchField.textboxKeyTyped(Keyboard.getEventCharacter(), Keyboard.getEventKey());
-                panel.syncSearchField();
                 panel.rebuildFiltered();
             }
         }

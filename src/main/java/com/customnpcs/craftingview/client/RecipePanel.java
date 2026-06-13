@@ -2,6 +2,7 @@ package com.customnpcs.craftingview.client;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
@@ -33,16 +34,25 @@ public class RecipePanel {
     private final List filtered = new ArrayList();
     private final List categories = new ArrayList();
 
+    // Cached visible page — avoids allocating a subList view every getVisible() call (called
+    // multiple times per frame by the renderer and hit-testing). Refreshed only on filter/scroll.
+    private final List cachedVisible = new ArrayList();
+
+    // Lowercased name / output-display caches, keyed by recipe identity. Avoids re-running
+    // toLowerCase()/getDisplayName() for every recipe on each rebuildFiltered() (per keystroke).
+    private final IdentityHashMap lowerNameCache = new IdentityHashMap();
+    private final IdentityHashMap lowerDisplayCache = new IdentityHashMap();
+
     private boolean collapsed = false;
     private int scrollOffset = 0;
     private RecipeCarpentry selectedRecipe = null;
     private int activeCategoryIndex = 0;
 
-    // Search field state — rebuilt each frame at the correct position
-    private String searchText = "";
-    private boolean searchFocused = false;
-    // Current frame's field (set by renderer before input handling)
+    // Persistent search field — created once (lazily, when its on-screen position is first known)
+    // and reused. searchField is the single source of truth for search text/focus.
     public GuiTextField searchField;
+    private int searchFieldX = Integer.MIN_VALUE;
+    private int searchFieldY = Integer.MIN_VALUE;
 
     public RecipePanel(boolean isAnvil) {
         this(isAnvil, SOURCE_CARPENTRY);
@@ -62,6 +72,9 @@ public class RecipePanel {
 
     public void reloadRecipes() {
         allRecipes.clear();
+        // Recipe instances may be replaced (e.g. Twilight global-recipe resync) — drop stale caches.
+        lowerNameCache.clear();
+        lowerDisplayCache.clear();
         if (recipeSource == SOURCE_WORKBENCH) {
             HashMap syncedRecipes = TwilightRecipeSyncClient.getSyncedGlobalRecipes();
             for (Object obj : syncedRecipes.values()) {
@@ -85,34 +98,33 @@ public class RecipePanel {
         if (!categories.isEmpty()) rebuildFiltered();
     }
 
-    public GuiTextField buildSearchField(int x, int y) {
-        GuiTextField tf = new GuiTextField(Minecraft.getMinecraft().fontRenderer,
-            x, y, PANEL_WIDTH - 8, 12);
-        tf.setMaxStringLength(32);
-        tf.setText(searchText);
-        tf.setFocused(searchFocused);
-        searchField = tf;
-        return tf;
-    }
-
-    public void syncSearchField() {
-        if (searchField != null) {
-            searchText = searchField.getText();
-            searchFocused = searchField.isFocused();
-        }
+    /**
+     * Create the search field once at the given position, or re-create it if the position changed
+     * (e.g. GUI resize), carrying over text and focus. Steady-state frames hit the early return,
+     * so no GuiTextField is allocated per frame. Called by the renderer before drawing the header.
+     */
+    public void ensureSearchField(int x, int y) {
+        if (searchField != null && searchFieldX == x && searchFieldY == y) return;
+        String text = searchField != null ? searchField.getText() : "";
+        boolean focused = searchField != null && searchField.isFocused();
+        searchField = new GuiTextField(Minecraft.getMinecraft().fontRenderer, x, y, PANEL_WIDTH - 8, 12);
+        searchField.setMaxStringLength(32);
+        searchField.setText(text);
+        searchField.setFocused(focused);
+        searchFieldX = x;
+        searchFieldY = y;
     }
 
     public void setSearchFocused(boolean focused) {
-        searchFocused = focused;
         if (searchField != null) searchField.setFocused(focused);
     }
 
     public boolean isSearchFocused() {
-        return searchFocused;
+        return searchField != null && searchField.isFocused();
     }
 
     public void rebuildFiltered() {
-        String query = searchText.toLowerCase().trim();
+        String query = searchField != null ? searchField.getText().toLowerCase().trim() : "";
         CategoryDefinition cat = (CategoryDefinition) categories.get(activeCategoryIndex);
 
         filtered.clear();
@@ -125,13 +137,15 @@ public class RecipePanel {
 
         int maxScroll = Math.max(0, filtered.size() - RECIPES_PER_PAGE);
         if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+
+        updateVisibleCache();
     }
 
     private boolean matchesCategory(RecipeCarpentry recipe, CategoryDefinition cat) {
         if (cat == BROWSE_ALL || (cat.recipeIds.isEmpty() && cat.recipeNames.isEmpty())) return true;
         if (cat.recipeIds.contains(Integer.valueOf(recipe.id))) return true;
-        if (recipe.name != null) {
-            String rname = recipe.name.toLowerCase();
+        String rname = getLowerName(recipe);
+        if (rname != null) {
             for (int i = 0; i < cat.recipeNames.size(); i++) {
                 if (rname.contains((String) cat.recipeNames.get(i))) return true;
             }
@@ -140,17 +154,45 @@ public class RecipePanel {
     }
 
     private boolean matchesSearch(RecipeCarpentry recipe, String query) {
-        if (recipe.name != null && recipe.name.toLowerCase().contains(query)) return true;
-        if (recipe.recipeOutput != null) {
-            String itemName = recipe.recipeOutput.getDisplayName().toLowerCase();
-            if (itemName.contains(query)) return true;
-        }
+        String name = getLowerName(recipe);
+        if (name != null && name.contains(query)) return true;
+        String display = getLowerDisplay(recipe);
+        if (display != null && display.contains(query)) return true;
         return false;
     }
 
-    public List getVisible() {
+    /** Lowercased recipe name, cached by recipe identity; null if the recipe has no name. */
+    private String getLowerName(RecipeCarpentry recipe) {
+        if (recipe.name == null) return null;
+        String cached = (String) lowerNameCache.get(recipe);
+        if (cached == null) {
+            cached = recipe.name.toLowerCase();
+            lowerNameCache.put(recipe, cached);
+        }
+        return cached;
+    }
+
+    /** Lowercased output display name, cached by recipe identity; null if there is no output. */
+    private String getLowerDisplay(RecipeCarpentry recipe) {
+        String cached = (String) lowerDisplayCache.get(recipe);
+        if (cached != null) return cached;
+        if (recipe.recipeOutput == null) return null;
+        cached = recipe.recipeOutput.getDisplayName().toLowerCase();
+        lowerDisplayCache.put(recipe, cached);
+        return cached;
+    }
+
+    /** Rebuild the cached visible page from filtered + scrollOffset. */
+    private void updateVisibleCache() {
+        cachedVisible.clear();
         int end = Math.min(scrollOffset + RECIPES_PER_PAGE, filtered.size());
-        return filtered.subList(scrollOffset, end);
+        for (int i = scrollOffset; i < end; i++) {
+            cachedVisible.add(filtered.get(i));
+        }
+    }
+
+    public List getVisible() {
+        return cachedVisible;
     }
 
     public int getScrollOffset() { return scrollOffset; }
@@ -160,6 +202,7 @@ public class RecipePanel {
     public void scroll(int delta) {
         int maxScroll = Math.max(0, filtered.size() - RECIPES_PER_PAGE);
         scrollOffset = Math.max(0, Math.min(scrollOffset + delta, maxScroll));
+        updateVisibleCache();
     }
 
     public void setCategory(int index) {
@@ -168,6 +211,18 @@ public class RecipePanel {
             scrollOffset = 0;
             rebuildFiltered();
         }
+    }
+
+    /**
+     * Row index of the selected recipe within the current visible page (0-based), or -1 if nothing
+     * is selected or the selection is scrolled off the current page. Lets the renderer anchor the
+     * floating ingredient overlay to the selected row.
+     */
+    public int getSelectedVisibleIndex() {
+        if (selectedRecipe == null) return -1;
+        int idx = filtered.indexOf(selectedRecipe);
+        if (idx < scrollOffset || idx >= scrollOffset + RECIPES_PER_PAGE) return -1;
+        return idx - scrollOffset;
     }
 
     public void selectRecipe(RecipeCarpentry recipe) { selectedRecipe = recipe; }
