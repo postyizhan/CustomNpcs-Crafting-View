@@ -68,11 +68,13 @@ public final class RecipeAccess {
 
             fId = field(recipeClass, "id");
             fName = field(recipeClass, "name");
-            fWidth = field(recipeClass, "recipeWidth");
-            fHeight = field(recipeClass, "recipeHeight");
+            // recipeWidth/recipeHeight 继承自 MC 的 ShapedRecipes：dev 用 MCP 名，prod 用 SRG 名，双候选探测
+            fWidth = tryField(recipeClass, "recipeWidth", "field_77576_b");
+            fHeight = tryField(recipeClass, "recipeHeight", "field_77577_c");
             fIgnoreDamage = field(recipeClass, "ignoreDamage");
             fIgnoreNBT = field(recipeClass, "ignoreNBT");
-            mGetRecipeOutput = recipeClass.getMethod("getRecipeOutput");
+            // getRecipeOutput 同样继承自 ShapedRecipes：dev 为 getRecipeOutput，prod 为 func_77571_b
+            mGetRecipeOutput = tryMethod(recipeClass, "getRecipeOutput", "func_77571_b");
             mGetCraftingItem = recipeClass.getMethod("getCraftingItem", int.class);
 
             available = true;
@@ -237,5 +239,19 @@ public final class RecipeAccess {
 
     private static Field field(Class<?> c, String name) throws NoSuchFieldException {
         return tryField(c, name);
+    }
+
+    /** 逐候选名探测无参方法：getMethod 沿父类查找 public 方法，覆盖继承自 ShapedRecipes 的成员。 */
+    private static Method tryMethod(Class<?> c, String... names) throws NoSuchMethodException {
+        for (String n : names) {
+            try {
+                Method m = c.getMethod(n);
+                m.setAccessible(true);
+                return m;
+            } catch (NoSuchMethodException ignored) {
+                // 尝试下一个候选
+            }
+        }
+        throw new NoSuchMethodException(c.getName() + ": " + String.join(" / ", names));
     }
 }
