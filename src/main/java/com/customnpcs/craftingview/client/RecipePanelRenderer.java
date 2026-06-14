@@ -93,7 +93,8 @@ public class RecipePanelRenderer {
         for (int i = 0; i < visible.size(); i++) {
             RecipeView recipe = visible.get(i);
             boolean selected = recipe.equals(sel);
-            drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr, mc);
+            ItemStack rowTip = drawRecipeRow(cx, px, cy, pw, recipe, selected, mouseX, mouseY, fr, mc);
+            if (rowTip != null) tooltipStack = rowTip;
             cy += RECIPE_ROW_H;
         }
 
@@ -106,7 +107,12 @@ public class RecipePanelRenderer {
         if (selIdx >= 0 && sel != null) {
             int rowY = listTop + selIdx * RECIPE_ROW_H;
             // 优化：传递 gui.height 避免每次创建 ScaledResolution
-            tooltipStack = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr, gui.height, mc);
+            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr, gui.height, mc);
+            // 浮层盖在列表行之上：鼠标落在浮层矩形内时，tooltip 由浮层决定（命中原料则显示该原料，
+            // 否则清空），避免被遮住的行产物 tooltip 穿透显示。
+            int oy = overlayY(rowY, gui.height);
+            boolean overOverlay = mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + OVERLAY_H;
+            if (overOverlay) tooltipStack = overlayTip;
         }
 
         if (tooltipStack != null) {
@@ -140,15 +146,25 @@ public class RecipePanelRenderer {
         return cy;
     }
 
-    private static void drawRecipeRow(int cx, int px, int ry, int pw, RecipeView recipe, boolean selected, int mouseX,
-        int mouseY, FontRenderer fr, Minecraft mc) {
+    /**
+     * 绘制单个配方行。返回鼠标悬停在左侧产物图标（{@code (cx, ry)} 起的 16x16 区域）上时的产物
+     * ItemStack（用于 tooltip），未命中或无产物则 null。
+     */
+    private static ItemStack drawRecipeRow(int cx, int px, int ry, int pw, RecipeView recipe, boolean selected,
+        int mouseX, int mouseY, FontRenderer fr, Minecraft mc) {
 
         boolean hovered = mouseX >= cx && mouseX < px + pw - PADDING && mouseY >= ry && mouseY < ry + RECIPE_ROW_H;
         if (selected) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_SEL);
         else if (hovered) drawRect(cx, ry, px + pw - PADDING, ry + RECIPE_ROW_H, COLOR_ROW_HOV);
 
         ItemStack result = recipe.getRecipeOutput();
-        if (result != null) renderItem(result, cx, ry, mc);
+        ItemStack tooltipStack = null;
+        if (result != null) {
+            renderItem(result, cx, ry, mc);
+            if (mouseX >= cx && mouseX < cx + GRID_CELL && mouseY >= ry && mouseY < ry + GRID_CELL) {
+                tooltipStack = result;
+            }
+        }
 
         String name = (recipe.name == null || recipe.name.isEmpty()) && result != null ? result.getDisplayName()
             : (recipe.name != null ? recipe.name : "");
@@ -158,6 +174,8 @@ public class RecipePanelRenderer {
         boolean btnHov = mouseX >= btnX && mouseX < btnX + 10 && mouseY >= ry + 3 && mouseY < ry + 13;
         drawRect(btnX, ry + 3, btnX + 10, ry + 13, btnHov ? COLOR_PLUS_HOV : COLOR_PLUS_BTN);
         fr.drawString("+", btnX + 2, ry + 4, COLOR_TEXT);
+
+        return tooltipStack;
     }
 
     /**
