@@ -49,6 +49,20 @@ public class RecipePanelRenderer {
     // + divider(1+3) + scrollUp(7) = guiTop + 56
     private static final int LIST_BASE_OFFSET = HEADER_TO_CATS_OFFSET + CATEGORY_TAB_H + 2 + 1 + 3 + 7;
 
+    /**
+     * 获取为了适配屏幕分辨率防止越界而修正后的 py 坐标
+     */
+    private static int getCorrectedPy(RecipePanel panel, int guiTop) {
+        GuiScreen gui = Minecraft.getMinecraft().currentScreen;
+        if (gui != null) {
+            int ph = calcPanelHeight(panel.getVisible(), panel.getSelectedRecipe(), panel);
+            if (guiTop + ph > gui.height) {
+                return Math.max(0, gui.height - ph);
+            }
+        }
+        return guiTop;
+    }
+
     public static void render(GuiCarpentryBenchWrapper gui, RecipePanel panel, int mouseX, int mouseY) {
         render(gui, panel, gui.getGuiLeft(), gui.getGuiTop(), mouseX, mouseY);
     }
@@ -56,7 +70,7 @@ public class RecipePanelRenderer {
     public static void render(GuiScreen gui, RecipePanel panel, int guiLeft, int guiTop, int mouseX, int mouseY) {
 
         int px = panel.getPanelX(guiLeft);
-        int py = guiTop;
+        int py = getCorrectedPy(panel, guiTop);
 
         FontRenderer fr = Minecraft.getMinecraft().fontRenderer;
 
@@ -256,13 +270,14 @@ public class RecipePanelRenderer {
     // --- Hit testing ---
 
     public static boolean isCollapseButtonHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
+        int py = getCorrectedPy(panel, guiTop);
         if (panel.isCollapsed()) {
             int x = guiLeft - COLLAPSE_BTN_W - 8;
-            return mx >= x && mx < x + COLLAPSE_BTN_W + 4 && my >= guiTop && my < guiTop + 20;
+            return mx >= x && mx < x + COLLAPSE_BTN_W + 4 && my >= py && my < py + 20;
         } else {
             int px = panel.getPanelX(guiLeft);
             int x = px + RecipePanel.PANEL_WIDTH - COLLAPSE_BTN_W - 2;
-            int y = guiTop + 2;
+            int y = py + 2;
             return mx >= x && mx < x + COLLAPSE_BTN_W && my >= y && my < y + 12;
         }
     }
@@ -270,7 +285,8 @@ public class RecipePanelRenderer {
     public static int getCategoryTabHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {
         int px = panel.getPanelX(guiLeft);
         int cx = px + PADDING;
-        int cy = guiTop + HEADER_TO_CATS_OFFSET;
+        int py = getCorrectedPy(panel, guiTop);
+        int cy = py + HEADER_TO_CATS_OFFSET;
         int width = RecipePanel.PANEL_WIDTH - PADDING * 2;
         List cats = panel.getCategories();
         int tabW = Math.min(width / Math.max(cats.size(), 1), 36);
@@ -295,10 +311,11 @@ public class RecipePanelRenderer {
         int cx = px + PADDING;
         List visible = panel.getVisible();
         RecipeCarpentry sel = panel.getSelectedRecipe();
+        int py = getCorrectedPy(panel, guiTop);
         for (int i = 0; i < visible.size(); i++) {
-            int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, panel, i);
+            int ry = getRowY(py + LIST_BASE_OFFSET, visible, sel, panel, i);
             if (mx >= cx && mx < px + RecipePanel.PANEL_WIDTH - PADDING
-                && my >= ry && my < ry + RECIPE_ROW_H) return i;
+                    && my >= ry && my < ry + RECIPE_ROW_H) return i;
         }
         return -1;
     }
@@ -307,7 +324,8 @@ public class RecipePanelRenderer {
         int px = panel.getPanelX(guiLeft);
         List visible = panel.getVisible();
         RecipeCarpentry sel = panel.getSelectedRecipe();
-        int ry = getRowY(guiTop + LIST_BASE_OFFSET, visible, sel, panel, rowIndex);
+        int py = getCorrectedPy(panel, guiTop);
+        int ry = getRowY(py + LIST_BASE_OFFSET, visible, sel, panel, rowIndex);
         int btnX = px + RecipePanel.PANEL_WIDTH - PADDING - 12;
         return mx >= btnX && mx < btnX + 10 && my >= ry + 3 && my < ry + 13;
     }
@@ -323,7 +341,7 @@ public class RecipePanelRenderer {
             return mx >= x && mx < x + COLLAPSE_BTN_W + 4 && my >= guiTop && my < guiTop + 20;
         }
         int px = panel.getPanelX(guiLeft);
-        int py = guiTop;
+        int py = getCorrectedPy(panel, guiTop);
         int ph = calcPanelHeight(panel.getVisible(), panel.getSelectedRecipe(), panel);
         return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= py && my < py + ph;
     }
