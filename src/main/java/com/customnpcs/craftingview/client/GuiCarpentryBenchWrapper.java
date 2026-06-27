@@ -26,8 +26,8 @@ public class GuiCarpentryBenchWrapper extends noppes.npcs.client.gui.player.GuiN
     }
 
     @Override
-    public void func_73863_a(int mouseX, int mouseY, float partialTick) {
-        super.func_73863_a(mouseX, mouseY, partialTick);
+    public void drawScreen(int mouseX, int mouseY, float partialTick) {
+        super.drawScreen(mouseX, mouseY, partialTick);
         RecipePanelRenderer.render(this, panel, mouseX, mouseY);
         handleMouseInput(mouseX, mouseY);
         handleKeyInput();
