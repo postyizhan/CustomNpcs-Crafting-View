@@ -45,8 +45,6 @@ dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
 
     implementation renamer.dependency("curse.maven:custom-npcs-221826:2206143")
-
-    implementation('net.minecraftforge.lex:legacyjavafixer:1.0')
 }
 
 renamer.mappings.from minecraft.dependency.toSrgFile
