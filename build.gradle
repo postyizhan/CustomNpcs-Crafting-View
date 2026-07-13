@@ -16,9 +16,12 @@ repositories {
     minecraft.mavenizer(it)
     maven fg.forgeMaven
     maven fg.minecraftLibsMaven
-    flatDir(
-            dir : 'libs'
-    )
+    maven {
+        url "https://cursemaven.com"
+        content {
+            includeGroup "curse.maven"
+        }
+    }
 }
 
 minecraft {
@@ -41,7 +44,7 @@ minecraft {
 dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
 
-    implementation renamer.dependency("libs:CustomNPCs_1.6.2-1.6.4")
+    implementation renamer.dependency("curse.maven:custom-npcs-221826:2206143")
 }
 
 renamer.mappings.from minecraft.dependency.toSrgFile
