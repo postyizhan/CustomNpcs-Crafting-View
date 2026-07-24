@@ -158,18 +158,26 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         panel.reloadRecipes();
     }
 
+    @Override
+    public void handleMouseInput() {
+        int dwheel = Mouse.getEventDWheel();
+        Minecraft mc = Minecraft.getMinecraft();
+        int mouseX = Mouse.getEventX() * this.width / mc.displayWidth;
+        int mouseY = this.height - Mouse.getEventY() * this.height / mc.displayHeight - 1;
+
+        super.handleMouseInput();
+
+        if (dwheel != 0 && !panel.isCollapsed()
+                && RecipePanelRenderer.isPanelHit(panel, guiLeft, guiTop, mouseX, mouseY)) {
+            panel.scroll(dwheel < 0 ? 1 : -1);
+        }
+    }
+
     private void handleMouseInput(int mx, int my) {
         boolean leftDown = Mouse.isButtonDown(0);
         boolean clicked = leftDown && !lastLeftDown;
         lastLeftDown = leftDown;
 
-        int dwheel = Mouse.getDWheel();
-        if (dwheel != 0) {
-            if (RecipePanelRenderer.isPanelHit(panel, guiLeft, guiTop, mx, my)) {
-                panel.scroll(dwheel < 0 ? 1 : -1);
-            }
-            return;
-        }
         if (!clicked) return;
 
         if (!RecipePanelRenderer.isPanelHit(panel, guiLeft, guiTop, mx, my)) {

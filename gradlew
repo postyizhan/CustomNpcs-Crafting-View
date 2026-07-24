@@ -114,6 +114,14 @@ case "$( uname )" in                #(
   NONSTOP* )        nonstop=true ;;
 esac
 
+# ForgeGradle's Minecraft Mavenizer needs a full Java 8 JDK when rebuilding
+# legacy Minecraft sources. On macOS its provisioner can otherwise select a
+# downloaded JRE without javac, even when Gradle's toolchain finds a local JDK.
+if "$darwin" && [ -z "${JAVA_HOME_8:-}" ] && [ -x /usr/libexec/java_home ] ; then
+    JAVA_HOME_8=$( /usr/libexec/java_home -v 1.8 2>/dev/null ) || true
+    export JAVA_HOME_8
+fi
+
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
 

@@ -1,4 +1,5 @@
 plugins {
+    id 'net.minecraftforge.accesstransformers' version '5.0.3'
     id 'java'
     id 'net.minecraftforge.gradle' version "7.0.28"
     id("net.minecraftforge.renamer") version "1.1.2"
@@ -11,10 +12,145 @@ tasks.withType(JavaCompile) {
     options.compilerArgs += ['-source', '1.6', '-target', '1.6']
 }
 
+// FML 6 calls Collections.sort on LaunchWrapper's actively iterated tweak
+// list. Since Java 8 this increments ArrayList.modCount and crashes startup.
+// Rewrite that one legacy call immediately before every client/server launch.
+def indexOfBytes = { byte[] source, byte[] target ->
+    int match = -1
+    for (int i = 0; i <= source.length - target.length; i++) {
+        boolean found = true
+        for (int j = 0; j < target.length; j++) {
+            if (source[i + j] != target[j]) {
+                found = false
+                break
+            }
+        }
+        if (found) {
+            if (match != -1) {
+                throw new GradleException('Found multiple matching FML Collections references')
+            }
+            match = i
+        }
+    }
+    return match
+}
+
+def patchLegacyFmlSort = {
+    def forgeJar = file(".gradle/mavenizer/repo/net/minecraftforge/forge/${minecraft_version}-${forge_version}/forge-${minecraft_version}-${forge_version}.jar")
+    if (!forgeJar.exists()) {
+        throw new GradleException("Missing Forge runtime jar: ${forgeJar}")
+    }
+
+    byte[] originalOwner = 'java/util/Collections'.getBytes('UTF-8')
+    byte[] replacementOwner = 'legacyfix/Collections'.getBytes('UTF-8')
+    if (originalOwner.length != replacementOwner.length) {
+        throw new GradleException('FML compatibility owner names must have equal length')
+    }
+
+    def patchedJar = new File(forgeJar.parentFile, forgeJar.name + '.patched')
+    def input = new java.util.zip.ZipInputStream(new FileInputStream(forgeJar))
+    def output = new java.util.zip.ZipOutputStream(new FileOutputStream(patchedJar))
+    boolean patched = false
+    try {
+        java.util.zip.ZipEntry entry
+        while ((entry = input.nextEntry) != null) {
+            def copy = new java.util.zip.ZipEntry(entry.name)
+            copy.time = entry.time
+            output.putNextEntry(copy)
+
+            byte[] bytes = input.readAllBytes()
+            if (entry.name == 'cpw/mods/fml/relauncher/CoreModManager.class') {
+                int originalMatch = indexOfBytes(bytes, originalOwner)
+                int replacementMatch = indexOfBytes(bytes, replacementOwner)
+                if (originalMatch >= 0 && replacementMatch >= 0) {
+                    throw new GradleException('Found both original and patched FML Collections owners')
+                }
+                if (originalMatch >= 0) {
+                    System.arraycopy(replacementOwner, 0, bytes, originalMatch, replacementOwner.length)
+                    patched = true
+                } else if (replacementMatch >= 0) {
+                    patched = true
+                } else {
+                    throw new GradleException('Could not locate FML Collections.sort reference')
+                }
+            }
+
+            output.write(bytes)
+            output.closeEntry()
+        }
+    } finally {
+        input.close()
+        output.close()
+    }
+
+    if (!patched) {
+        patchedJar.delete()
+        throw new GradleException('Could not patch FML CoreModManager')
+    }
+    java.nio.file.Files.move(
+        patchedJar.toPath(),
+        forgeJar.toPath(),
+        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+    )
+}
+
+// Slime Launcher caches extracted natives independently of Gradle's resolved
+// artifacts. Refresh the cached LWJGL files with the Apple Silicon versions
+// immediately before launch.
+tasks.configureEach {
+    if (name == 'runClient' || name == 'runServer') {
+        doFirst {
+            patchLegacyFmlSort()
+
+            if (name == 'runClient' && System.getProperty('os.arch') in ['aarch64', 'arm64']) {
+                def nativesJar = configurations.runtimeClasspath.files.find {
+                    it.name == 'lwjgl-platform-2.9.4+legacyfabric.9-natives-osx.jar'
+                }
+                if (nativesJar == null) {
+                    throw new GradleException('Missing Apple Silicon LWJGL natives jar')
+                }
+
+                def nativesDir = new File(
+                    gradle.gradleUserHomeDir,
+                    "caches/minecraftforge/forgegradle/slime-launcher/cache/net/minecraftforge/forge/${minecraft_version}-${forge_version}/natives"
+                )
+                nativesDir.mkdirs()
+                copy {
+                    from zipTree(nativesJar)
+                    into nativesDir
+                    include 'liblwjgl-macos-aarch64.dylib', 'libopenal-aarch64.dylib'
+                }
+            }
+        }
+    }
+}
+
 repositories {
     mavenCentral()
     minecraft.mavenizer(it)
     maven fg.forgeMaven
+
+    // Apple Silicon-compatible LWJGL 2 builds.
+    maven {
+        url = uri("https://repo.legacyfabric.net/legacyfabric")
+        content {
+            includeGroup "org.lwjgl.lwjgl"
+        }
+    }
+
+    // Minecraft 1.6.4 references an LWJGL nightly whose published POM points
+    // to a missing 2.9.1-SNAPSHOT parent. Resolve these artifacts directly
+    // instead of asking Gradle to parse the broken POM.
+    maven {
+        url = uri("https://libraries.minecraft.net")
+        content {
+            includeGroup "org.lwjgl.lwjgl"
+        }
+        metadataSources {
+            artifact()
+        }
+    }
+
     maven fg.minecraftLibsMaven
     maven {
         url "https://cursemaven.com"
@@ -26,6 +162,7 @@ repositories {
 
 minecraft {
     mappings channel: 'snapshot', version: '20130918-1.6.3'
+    accessTransformer = true
 
     runs {
         register('client') {
@@ -41,10 +178,32 @@ minecraft {
     }
 }
 
+configurations.configureEach {
+    // Forge's generated metadata also contains the obsolete
+    // net.sourceforge.argo coordinate. argo:argo:2.25_fixed is the working
+    // replacement already supplied by the same Forge dependency.
+    exclude group: "net.sourceforge.argo", module: "argo"
+
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.lwjgl.lwjgl') {
+            // The Mojang 2.9.1 natives are Intel-only. Legacy Fabric's build
+            // keeps LWJGL 2 compatibility and includes macOS arm64 natives.
+            details.useVersion '2.9.4+legacyfabric.9'
+            details.because 'run Minecraft 1.6.4 natively on Apple Silicon'
+        }
+    }
+}
+
 dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
 
     implementation renamer.dependency("curse.maven:custom-npcs-221826:2206143")
+}
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes 'FMLAT': 'accesstransformer.cfg'
+    }
 }
 
 renamer.mappings.from minecraft.dependency.toSrgFile
