@@ -76,7 +76,7 @@ public class RecipePanelRenderer {
         int cx = px + PADDING;
         int cy = py + PADDING;
 
-        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, false, fr);
+        drawCollapseButton(px + pw - COLLAPSE_BTN_W - 2, py + 2, mouseX, mouseY, fr);
         cy = drawHeader(cx, px, cy, pw, panel, mouseX, mouseY, fr);
 
         // Recipe list — fixed-height rows, no inline push. The selected recipe's grid is drawn
@@ -116,7 +116,7 @@ public class RecipePanelRenderer {
     private static int drawHeader(int cx, int px, int cy, int pw, RecipePanel panel,
         int mouseX, int mouseY, FontRenderer fr) {
 
-        fr.drawString(panel.isWorkbenchSource() ? "Workbench" : (panel.isAnvil() ? "Anvil" : "Carpentry"), cx, cy, COLOR_TEXT);
+        fr.drawString(panel.isWorkbenchSource() ? "Workbench" : "Carpentry", cx, cy, COLOR_TEXT);
         cy += 10;
 
         // Persistent search field — created/repositioned only when needed, not allocated per frame.
@@ -236,10 +236,10 @@ public class RecipePanelRenderer {
         fr.drawString(">", x + 3, y + 6, COLOR_TEXT);
     }
 
-    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, boolean collapsed, FontRenderer fr) {
+    private static void drawCollapseButton(int x, int y, int mouseX, int mouseY, FontRenderer fr) {
         boolean hov = mouseX >= x && mouseX < x + COLLAPSE_BTN_W && mouseY >= y && mouseY < y + 12;
         drawRect(x, y, x + COLLAPSE_BTN_W, y + 12, hov ? 0xCC555555 : 0xCC333333);
-        fr.drawString(collapsed ? ">" : "<", x + 2, y + 2, COLOR_TEXT);
+        fr.drawString("<", x + 2, y + 2, COLOR_TEXT);
     }
 
     private static void drawBorder(int x, int y, int w, int h) {

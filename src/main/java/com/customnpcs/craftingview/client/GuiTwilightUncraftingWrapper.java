@@ -12,7 +12,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.StatCollector;
 
-import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
@@ -33,7 +32,7 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         new ResourceLocation("twilightforest:textures/gui/guigoblintinkering.png");
 
     private final RecipePanel panel;
-    private boolean lastLeftDown = false;
+    private boolean panelMouseButton;
 
     // Twilight cost accessor methods (foreign API) resolved once via reflection, then cached —
     // avoids a getMethod() lookup every frame in drawGuiContainerBackgroundLayer.
@@ -43,7 +42,7 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
 
     public GuiTwilightUncraftingWrapper(Container container) {
         super(container);
-        this.panel = new RecipePanel(false, RecipePanel.SOURCE_WORKBENCH);
+        this.panel = new RecipePanel(RecipePanel.SOURCE_WORKBENCH);
         Minecraft.getMinecraft().getNetHandler().addToSendQueue(
             PacketHandler.buildRequestGlobalRecipesPacket());
     }
@@ -60,8 +59,6 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
     public void drawScreen(int mouseX, int mouseY, float partialTick) {
         super.drawScreen(mouseX, mouseY, partialTick);
         RecipePanelRenderer.render(this, panel, this.guiLeft, this.guiTop, mouseX, mouseY);
-        handleMouseInput(mouseX, mouseY);
-        handleKeyInput();
     }
 
     @Override
@@ -173,67 +170,81 @@ public class GuiTwilightUncraftingWrapper extends GuiContainer {
         }
     }
 
-    private void handleMouseInput(int mx, int my) {
-        boolean leftDown = Mouse.isButtonDown(0);
-        boolean clicked = leftDown && !lastLeftDown;
-        lastLeftDown = leftDown;
-
-        if (!clicked) return;
-
-        if (!RecipePanelRenderer.isPanelHit(panel, guiLeft, guiTop, mx, my)) {
+    @Override
+    protected void mouseClicked(int mouseX, int mouseY, int button) {
+        if (!RecipePanelRenderer.isPanelHit(panel, guiLeft, guiTop, mouseX, mouseY)) {
             panel.setSearchFocused(false);
+            super.mouseClicked(mouseX, mouseY, button);
             return;
         }
-        if (RecipePanelRenderer.isCollapseButtonHit(panel, guiLeft, guiTop, mx, my)) {
+
+        // The panel is outside the vanilla container. Consume every button there so GuiContainer
+        // does not interpret it as an outside click and drop the stack carried by the cursor.
+        panelMouseButton = true;
+        if (button != 0) return;
+
+        if (RecipePanelRenderer.isCollapseButtonHit(panel, guiLeft, guiTop, mouseX, mouseY)) {
             playClickSound();
             panel.toggleCollapsed();
             return;
         }
-        if (panel.isCollapsed()) return;
 
-        // Clicks inside the floating overlay are consumed here, not passed through to rows beneath.
-        if (RecipePanelRenderer.isOverlayHit(panel, guiLeft, guiTop, mx, my)) return;
+        if (panel.isCollapsed()) return;
+        if (RecipePanelRenderer.isOverlayHit(panel, guiLeft, guiTop, mouseX, mouseY)) return;
 
         if (panel.searchField != null) {
-            panel.searchField.mouseClicked(mx, my, 0);
+            panel.searchField.mouseClicked(mouseX, mouseY, button);
         }
 
-        int catIdx = RecipePanelRenderer.getCategoryTabHit(panel, guiLeft, guiTop, mx, my);
+        int catIdx = RecipePanelRenderer.getCategoryTabHit(panel, guiLeft, guiTop, mouseX, mouseY);
         if (catIdx >= 0) {
             playClickSound();
             panel.setCategory(catIdx);
             return;
         }
 
-        int rowIdx = RecipePanelRenderer.getRecipeRowHit(panel, guiLeft, guiTop, mx, my);
-        if (rowIdx >= 0) {
-            java.util.List visible = panel.getVisible();
-            if (rowIdx < visible.size()) {
-                RecipeCarpentry recipe = (RecipeCarpentry) visible.get(rowIdx);
-                if (RecipePanelRenderer.isPlusButtonHit(panel, guiLeft, guiTop, mx, my, rowIdx)) {
-                    playClickSound();
-                    Minecraft.getMinecraft().getNetHandler().addToSendQueue(
-                        PacketHandler.buildFillTwilightGridPacket(recipe.id));
-                } else if (recipe == panel.getSelectedRecipe()) {
-                    playClickSound();
-                    panel.selectRecipe(null);
-                } else {
-                    playClickSound();
-                    panel.selectRecipe(recipe);
-                }
-            }
+        int rowIdx = RecipePanelRenderer.getRecipeRowHit(panel, guiLeft, guiTop, mouseX, mouseY);
+        if (rowIdx < 0) return;
+
+        java.util.List visible = panel.getVisible();
+        if (rowIdx >= visible.size()) return;
+
+        RecipeCarpentry recipe = (RecipeCarpentry) visible.get(rowIdx);
+        playClickSound();
+        if (RecipePanelRenderer.isPlusButtonHit(panel, guiLeft, guiTop, mouseX, mouseY, rowIdx)) {
+            Minecraft.getMinecraft().getNetHandler().addToSendQueue(
+                PacketHandler.buildFillTwilightGridPacket(recipe.id));
+        } else if (recipe == panel.getSelectedRecipe()) {
+            panel.selectRecipe(null);
+        } else {
+            panel.selectRecipe(recipe);
         }
     }
 
-    private void handleKeyInput() {
-        if (panel.isCollapsed()) return;
-        if (!panel.isSearchFocused()) return;
-        while (Keyboard.next()) {
-            if (Keyboard.getEventKeyState() && panel.searchField != null) {
-                panel.searchField.textboxKeyTyped(Keyboard.getEventCharacter(), Keyboard.getEventKey());
-                panel.rebuildFiltered();
-            }
+    @Override
+    protected void mouseMovedOrUp(int mouseX, int mouseY, int button) {
+        if (panelMouseButton) {
+            panelMouseButton = false;
+            return;
         }
+        super.mouseMovedOrUp(mouseX, mouseY, button);
+    }
+
+    @Override
+    protected void mouseClickMove(int mouseX, int mouseY, int button, long elapsed) {
+        if (!panelMouseButton) {
+            super.mouseClickMove(mouseX, mouseY, button, elapsed);
+        }
+    }
+
+    @Override
+    protected void keyTyped(char character, int keyCode) {
+        if (!panel.isCollapsed() && panel.searchField != null
+                && panel.searchField.textboxKeyTyped(character, keyCode)) {
+            panel.rebuildFiltered();
+            return;
+        }
+        super.keyTyped(character, keyCode);
     }
 
     private void playClickSound() {

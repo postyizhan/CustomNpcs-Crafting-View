@@ -28,7 +28,6 @@ public class RecipePanel {
     public static final CategoryDefinition BROWSE_ALL = new CategoryDefinition(
         "Browse All", new ArrayList(), new ArrayList());
 
-    private final boolean isAnvil;
     private final int recipeSource;
     private final List allRecipes = new ArrayList();
     private final List filtered = new ArrayList();
@@ -54,12 +53,11 @@ public class RecipePanel {
     private int searchFieldX = Integer.MIN_VALUE;
     private int searchFieldY = Integer.MIN_VALUE;
 
-    public RecipePanel(boolean isAnvil) {
-        this(isAnvil, SOURCE_CARPENTRY);
+    public RecipePanel() {
+        this(SOURCE_CARPENTRY);
     }
 
-    public RecipePanel(boolean isAnvil, int recipeSource) {
-        this.isAnvil = isAnvil;
+    public RecipePanel(int recipeSource) {
         this.recipeSource = recipeSource;
 
         reloadRecipes();
@@ -231,7 +229,6 @@ public class RecipePanel {
     public RecipeCarpentry getSelectedRecipe() { return selectedRecipe; }
     public int getActiveCategoryIndex() { return activeCategoryIndex; }
     public List getCategories() { return categories; }
-    public boolean isAnvil() { return isAnvil; }
     public boolean isWorkbenchSource() { return recipeSource == SOURCE_WORKBENCH; }
     public int getPanelX(int guiLeft) { return guiLeft - PANEL_WIDTH - 4; }
 }
