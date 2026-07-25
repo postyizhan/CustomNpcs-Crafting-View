@@ -13,6 +13,7 @@ import net.minecraft.item.ItemStack;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
+import com.customnpcs.craftingview.Config;
 import com.customnpcs.craftingview.Config.CategoryDefinition;
 
 import cpw.mods.fml.relauncher.Side;
@@ -154,8 +155,13 @@ public class RecipePanelRenderer {
             }
         }
 
-        String name = (recipe.name == null || recipe.name.isEmpty()) && result != null
-            ? result.getDisplayName() : (recipe.name != null ? recipe.name : "");
+        String name;
+        if (Config.useOutputNameAsLabel && result != null) {
+            name = result.getDisplayName();
+        } else {
+            name = (recipe.name == null || recipe.name.isEmpty()) && result != null
+                ? result.getDisplayName() : (recipe.name != null ? recipe.name : "");
+        }
         fr.drawString(fr.trimStringToWidth(name, pw - PADDING * 2 - 18 - 14), cx + 18, ry + 4, COLOR_TEXT);
 
         int btnX = px + pw - PADDING - 12;
