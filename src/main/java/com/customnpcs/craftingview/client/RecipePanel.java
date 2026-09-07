@@ -27,6 +27,8 @@ public class RecipePanel {
         new ArrayList<>());
 
     private final boolean isAnvil;
+    /** true 表示面板展示宿主的全局 3x3 工作台配方（暮色拆解台场景），而非 4x4 木工台/铁砧配方。 */
+    private final boolean globalWorkbenchOnly;
     private final List<RecipeView> allRecipes = new ArrayList<>();
     private final List<RecipeView> filtered = new ArrayList<>();
     private final List<CategoryDefinition> categories = new ArrayList<>();
@@ -42,9 +44,35 @@ public class RecipePanel {
     public GuiTextField searchField;
 
     public RecipePanel(boolean isAnvil) {
-        this.isAnvil = isAnvil;
+        this(isAnvil, false, null);
+    }
 
-        allRecipes.addAll(RecipeAccess.getAllCarpentryRecipes());
+    /**
+     * 全局工作台配方面板（暮色拆解台场景）。
+     *
+     * @param recipes 配方来源。非 null 时直接使用（客户端由服务端同步而来）；null 时回退本地读取。
+     */
+    public static RecipePanel forGlobalWorkbench(List<RecipeView> recipes) {
+        return new RecipePanel(false, true, recipes);
+    }
+
+    private RecipePanel(boolean isAnvil, boolean globalWorkbenchOnly, List<RecipeView> providedRecipes) {
+        this.isAnvil = isAnvil;
+        this.globalWorkbenchOnly = globalWorkbenchOnly;
+
+        if (providedRecipes != null) {
+            for (RecipeView recipe : providedRecipes) {
+                if (!globalWorkbenchOnly || (recipe.recipeWidth <= 3 && recipe.recipeHeight <= 3)) {
+                    allRecipes.add(recipe);
+                }
+            }
+        } else if (globalWorkbenchOnly) {
+            for (RecipeView recipe : RecipeAccess.getAllGlobalRecipes()) {
+                if (recipe.recipeWidth <= 3 && recipe.recipeHeight <= 3) allRecipes.add(recipe);
+            }
+        } else {
+            allRecipes.addAll(RecipeAccess.getAllCarpentryRecipes());
+        }
 
         // Build category list: Browse All + config categories
         categories.add(BROWSE_ALL);
@@ -183,6 +211,11 @@ public class RecipePanel {
 
     public boolean isAnvil() {
         return isAnvil;
+    }
+
+    /** true 表示展示全局 3x3 工作台配方（暮色拆解台场景），渲染与填充均按 3x3 处理。 */
+    public boolean isGlobalWorkbenchOnly() {
+        return globalWorkbenchOnly;
     }
 
     public int getPanelX(int guiLeft) {

@@ -14,10 +14,17 @@ public class Config {
     private static final List<CategoryDefinition> categoriesMutable = new ArrayList<>();
     public static final List<CategoryDefinition> categories = Collections.unmodifiableList(categoriesMutable);
 
+    // 开启后，配方查看面板中每个条目显示产物名字，而不是配方名。
+    public static boolean useOutputNameAsLabel = false;
+
     public static void load(File configFile) {
         Configuration cfg = new Configuration(configFile);
         try {
             cfg.load();
+
+            useOutputNameAsLabel = cfg
+                .get("general", "use_output_name_as_label", false, "开启后，配方查看面板中每个条目将显示产物的名字，而不是配方名")
+                .getBoolean(false);
 
             // Count how many categories are defined
             int count = 0;

@@ -13,12 +13,12 @@ import net.minecraft.item.ItemStack;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
+import com.customnpcs.craftingview.Config;
 import com.customnpcs.craftingview.Config.CategoryDefinition;
 import com.customnpcs.craftingview.compat.RecipeView;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
-import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
 
 @SideOnly(Side.CLIENT)
 public class RecipePanelRenderer {
@@ -30,8 +30,19 @@ public class RecipePanelRenderer {
     private static final int CATEGORY_TAB_H = 14;
     private static final int RECIPE_ROW_H = 16;
     private static final int GRID_CELL = 16;
-    // Floating ingredient-grid overlay height: top pad + "Recipe:" label + 4 rows of cells + bottom pad
-    private static final int OVERLAY_H = PADDING + 10 + 4 * (GRID_CELL + 1) + PADDING;
+    // 合成格边长：木工台/铁砧为 4x4，暮色拆解台的全局工作台配方为 3x3
+    private static final int GRID_SIZE_CARPENTRY = 4;
+    private static final int GRID_SIZE_WORKBENCH = 3;
+
+    /** 选中配方合成格的边长，取决于面板模式。 */
+    private static int gridSize(RecipePanel panel) {
+        return panel.isGlobalWorkbenchOnly() ? GRID_SIZE_WORKBENCH : GRID_SIZE_CARPENTRY;
+    }
+
+    /** 浮层高度：上内边距 + "Recipe:" 标签 + N 行格子 + 下内边距。随网格边长变化。 */
+    private static int overlayHeight(RecipePanel panel) {
+        return PADDING + 10 + gridSize(panel) * (GRID_CELL + 1) + PADDING;
+    }
 
     // Colors
     private static final int COLOR_BG = 0xCC2D2D2D;
@@ -53,16 +64,14 @@ public class RecipePanelRenderer {
     private static final int HEADER_TO_CATS_OFFSET = PADDING + 10 + SEARCH_FIELD_H + 3;
     private static final int LIST_BASE_OFFSET = HEADER_TO_CATS_OFFSET + CATEGORY_TAB_H + 2 + 1 + 3 + 7;
 
-    public static void render(GuiScreen gui, RecipePanel panel, int mouseX, int mouseY) {
-        if (!(gui instanceof GuiContainerNPCInterface)) return;
-        GuiContainerNPCInterface container = (GuiContainerNPCInterface) gui;
-
+    /**
+     * 以显式 GUI 原点渲染面板。供非 CustomNPCs 宿主界面（如暮色拆解台）复用：这些界面不继承
+     * {@code GuiContainerNPCInterface}，其 {@code guiLeft}/{@code guiTop} 由调用方自行取得后传入。
+     */
+    public static void render(GuiScreen gui, RecipePanel panel, int guiLeft, int guiTop, int mouseX, int mouseY) {
         // 优化：缓存 Minecraft 实例和 FontRenderer，避免重复调用
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer fr = mc.fontRenderer;
-
-        int guiLeft = container.guiLeft;
-        int guiTop = container.guiTop;
 
         int px = panel.getPanelX(guiLeft);
         int py = guiTop;
@@ -107,11 +116,12 @@ public class RecipePanelRenderer {
         if (selIdx >= 0 && sel != null) {
             int rowY = listTop + selIdx * RECIPE_ROW_H;
             // 优化：传递 gui.height 避免每次创建 ScaledResolution
-            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr, gui.height, mc);
+            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, panel, mouseX, mouseY, fr, gui.height, mc);
             // 浮层盖在列表行之上：鼠标落在浮层矩形内时，tooltip 由浮层决定（命中原料则显示该原料，
             // 否则清空），避免被遮住的行产物 tooltip 穿透显示。
-            int oy = overlayY(rowY, gui.height);
-            boolean overOverlay = mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + OVERLAY_H;
+            int overlayH = overlayHeight(panel);
+            int oy = overlayY(rowY, gui.height, overlayH);
+            boolean overOverlay = mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + overlayH;
             if (overOverlay) tooltipStack = overlayTip;
         }
 
@@ -123,7 +133,8 @@ public class RecipePanelRenderer {
     private static int drawHeader(int cx, int px, int cy, int pw, RecipePanel panel, int mouseX, int mouseY,
         FontRenderer fr) {
 
-        fr.drawString(panel.isAnvil() ? "Anvil" : "Carpentry", cx, cy, COLOR_TEXT);
+        String title = panel.isGlobalWorkbenchOnly() ? "Workbench" : (panel.isAnvil() ? "Anvil" : "Carpentry");
+        fr.drawString(title, cx, cy, COLOR_TEXT);
         cy += 10;
 
         panel.searchField.xPosition = cx;
@@ -166,8 +177,13 @@ public class RecipePanelRenderer {
             }
         }
 
-        String name = (recipe.name == null || recipe.name.isEmpty()) && result != null ? result.getDisplayName()
-            : (recipe.name != null ? recipe.name : "");
+        String name;
+        if (Config.useOutputNameAsLabel && result != null) {
+            name = result.getDisplayName();
+        } else {
+            name = (recipe.name == null || recipe.name.isEmpty()) && result != null ? result.getDisplayName()
+                : (recipe.name != null ? recipe.name : "");
+        }
         fr.drawString(fr.trimStringToWidth(name, pw - PADDING * 2 - 18 - 14), cx + 18, ry + 4, COLOR_TEXT);
 
         int btnX = px + pw - PADDING - 12;
@@ -185,15 +201,16 @@ public class RecipePanelRenderer {
      *
      * @param screenHeight GUI 高度，从外部传入避免每帧创建 ScaledResolution
      */
-    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int mouseX, int mouseY,
-        FontRenderer fr, int screenHeight, Minecraft mc) {
+    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, RecipePanel panel,
+        int mouseX, int mouseY, FontRenderer fr, int screenHeight, Minecraft mc) {
 
+        int overlayH = overlayHeight(panel);
         // 方向自适应：贴选中行下方，下方超屏则改贴上方（overlayY 与命中测试共用，保证一致）。
-        int oy = overlayY(rowY, screenHeight);
+        int oy = overlayY(rowY, screenHeight, overlayH);
 
         int ox = px;
-        drawRect(ox, oy, ox + pw, oy + OVERLAY_H, COLOR_OVERLAY_BG);
-        drawBorder(ox, oy, pw, OVERLAY_H);
+        drawRect(ox, oy, ox + pw, oy + overlayH, COLOR_OVERLAY_BG);
+        drawBorder(ox, oy, pw, overlayH);
 
         int cx = ox + PADDING;
         int cy = oy + PADDING;
@@ -203,8 +220,9 @@ public class RecipePanelRenderer {
         ItemStack tooltipStack = null;
         int rw = recipe.recipeWidth;
         int rh = recipe.recipeHeight;
-        for (int row = 0; row < 4; row++) {
-            for (int col = 0; col < 4; col++) {
+        int gs = gridSize(panel);
+        for (int row = 0; row < gs; row++) {
+            for (int col = 0; col < gs; col++) {
                 int gx = cx + col * (GRID_CELL + 1);
                 int gy = cy + row * (GRID_CELL + 1);
                 drawRect(gx, gy, gx + GRID_CELL, gy + GRID_CELL, 0xFF333333);
@@ -348,8 +366,9 @@ public class RecipePanelRenderer {
         // 使用 GuiScreen.height 而非创建 ScaledResolution
         GuiScreen screen = Minecraft.getMinecraft().currentScreen;
         int screenHeight = screen != null ? screen.height : 240; // 240 为降级默认值
-        int oy = overlayY(rowY, screenHeight);
-        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + OVERLAY_H;
+        int overlayH = overlayHeight(panel);
+        int oy = overlayY(rowY, screenHeight, overlayH);
+        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + overlayH;
     }
 
     /**
@@ -357,10 +376,11 @@ public class RecipePanelRenderer {
      *
      * @param rowY         选中行的 Y 坐标
      * @param screenHeight GUI 高度（从 GuiScreen.height 获取，避免创建 ScaledResolution）
+     * @param overlayH     浮层高度，随网格边长（3x3 / 4x4）变化，见 {@link #overlayHeight(RecipePanel)}
      */
-    private static int overlayY(int rowY, int screenHeight) {
+    private static int overlayY(int rowY, int screenHeight, int overlayH) {
         int oy = rowY + RECIPE_ROW_H;
-        if (oy + OVERLAY_H > screenHeight) oy = rowY - OVERLAY_H;
+        if (oy + overlayH > screenHeight) oy = rowY - overlayH;
         if (oy < 0) oy = 0;
         return oy;
     }

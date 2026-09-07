@@ -4,6 +4,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.customnpcs.craftingview.compat.RecipeAccess;
+import com.customnpcs.craftingview.compat.TwilightAccess;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
@@ -30,6 +31,7 @@ public class CraftingViewMod {
     public void preInit(FMLPreInitializationEvent event) {
         Config.load(event.getSuggestedConfigurationFile());
         RecipeAccess.init();
+        TwilightAccess.init();
     }
 
     @Mod.EventHandler

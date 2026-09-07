@@ -1,8 +1,10 @@
 package com.customnpcs.craftingview;
 
+import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.common.MinecraftForge;
 
 import com.customnpcs.craftingview.client.GuiEventHandler;
+import com.customnpcs.craftingview.client.TwilightRecipeSyncClient;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
@@ -20,5 +22,10 @@ public class ClientProxy extends CommonProxy {
         FMLCommonHandler.instance()
             .bus()
             .register(handler); // for RenderTickEvent
+    }
+
+    @Override
+    public void handleGlobalRecipeSync(NBTTagCompound payload) {
+        TwilightRecipeSyncClient.handleGlobalRecipes(payload);
     }
 }

@@ -1,88 +1,61 @@
 package com.customnpcs.craftingview.compat;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.customnpcs.craftingview.CraftingViewMod;
 
-import noppes.npcs.controllers.RecipeController;
-
-/**
- * 反射门面，屏蔽原版 CustomNPCs 与 CustomNPC+ 之间的 API 差异，使单一源码编译出的单个 jar
- * 能同时运行于两种宿主。
- *
- * <p>
- * <b>优化策略：AT + 轻量反射</b>
- * <ul>
- * <li>RecipeController 两宿主同包同名 → 通过 AT 直接访问，消除反射开销</li>
- * <li>RecipeCarpentry 两宿主 FQN 不同 → 保持运行时反射探测，但优化缓存</li>
- * </ul>
- *
- * <p>
- * 两宿主仅有 3 处符号差异，由本类在 {@link #init()} 时逐候选探测并锁定：
- * <ul>
- * <li>配方类：{@code noppes.npcs.controllers.RecipeCarpentry} 或 {@code ...controllers.data.RecipeCarpentry}</li>
- * <li>单例字段：{@code RecipeController.instance} 或 {@code RecipeController.Instance}</li>
- * <li>配方集合字段：原版用 {@code anvilRecipes}（装 RecipeCarpentry，即木工台 4x4 配方）；CNPC+ 用
- * {@code carpentryRecipes}，且另有同名 {@code anvilRecipes} 却装异类 RecipeAnvil，故探测优先
- * {@code carpentryRecipes}，避免在 CNPC+ 下误锁到 RecipeAnvil 集合（见 {@link #init()}）。</li>
- * </ul>
- */
+/** Runtime adapter for original CustomNPCs and catship package layouts. */
 public final class RecipeAccess {
 
     private RecipeAccess() {}
 
-    private static final String[] RECIPE_CANDIDATES = { "noppes.npcs.controllers.RecipeCarpentry",
-        "noppes.npcs.controllers.data.RecipeCarpentry" };
+    private static final String[] CONTROLLERS = { "noppes.npcs.controllers.RecipeController",
+        "noppes.common.controllers.RecipeController" };
+    private static final String[] RECIPES = { "noppes.npcs.controllers.RecipeCarpentry",
+        "noppes.npcs.controllers.data.RecipeCarpentry", "noppes.common.controllers.RecipeCarpentry" };
+    private static final String[] CONTAINERS = { "noppes.npcs.containers.ContainerCarpentryBench",
+        "noppes.common.containers.ContainerCarpentryBench" };
+    private static final String[] GUIS = { "noppes.npcs.client.gui.player.GuiNpcCarpentryBench",
+        "noppes.client.gui.player.GuiNpcCarpentryBench" };
 
-    private static Class<?> recipeClass;
-    private static Field fControllerInstance; // static 单例字段：只缓存 Field，每次即时取值
-    private static Field fRecipeMap; // 实例字段 anvilRecipes / carpentryRecipes
+    private static Class<?> controllerClass, recipeClass, containerClass, guiClass;
+    private static Field fController, fRecipes, fGlobal, fCraftMatrix;
+    static Field fId, fName, fWidth, fHeight, fOutput, fIgnoreDamage, fIgnoreNBT;
+    private static Method mGetRecipe, mOutput, mCraftingItem, mWidth, mHeight, mMetadata, mChanged, mDetect;
+    private static Object controller;
+    private static Map<?, ?> recipes, globalRecipes;
+    private static boolean available;
 
-    // 缓存 RecipeController 单例，避免每次反射读取（配合 AT 优化）
-    private static Object cachedControllerInstance;
-    private static Map<?, ?> cachedRecipeMap;
-
-    // RecipeCarpentry 成员句柄（包级可见，供 RecipeView 读取）
-    static Field fId, fName, fWidth, fHeight, fIgnoreDamage, fIgnoreNBT;
-    static Method mGetRecipeOutput, mGetCraftingItem;
-
-    private static boolean available = false;
-
-    /** 在 preInit 调用：探测并缓存全部反射句柄。失败则降级为不可用，不抛异常。 */
     public static void init() {
         try {
-            recipeClass = tryClass(RECIPE_CANDIDATES);
-
-            // RecipeController 已通过 AT 暴露，但单例字段名仍需探测（instance vs Instance）
-            fControllerInstance = tryField(RecipeController.class, "instance", "Instance");
-            // 配方集合字段名两宿主不同，且 CNPC+ 同时存在装 RecipeAnvil 的 anvilRecipes，
-            // 故优先探测 carpentryRecipes：原版无此字段会回退到 anvilRecipes（原版即木工台配方），
-            // CNPC+ 命中 carpentryRecipes（装 RecipeCarpentry），两宿主都锁定到正确的 4x4 配方集合。
-            fRecipeMap = tryField(RecipeController.class, "carpentryRecipes", "anvilRecipes");
-
-            fId = field(recipeClass, "id");
-            fName = field(recipeClass, "name");
-            // recipeWidth/recipeHeight 继承自 MC 的 ShapedRecipes：dev 用 MCP 名，prod 用 SRG 名，双候选探测
-            fWidth = tryField(recipeClass, "recipeWidth", "field_77576_b");
-            fHeight = tryField(recipeClass, "recipeHeight", "field_77577_c");
-            fIgnoreDamage = field(recipeClass, "ignoreDamage");
-            fIgnoreNBT = field(recipeClass, "ignoreNBT");
-            // getRecipeOutput 同样继承自 ShapedRecipes：dev 为 getRecipeOutput，prod 为 func_77571_b
-            mGetRecipeOutput = tryMethod(recipeClass, "getRecipeOutput", "func_77571_b");
-            mGetCraftingItem = recipeClass.getMethod("getCraftingItem", int.class);
-
+            controllerClass = findClass(CONTROLLERS);
+            recipeClass = findClass(RECIPES);
+            fController = findField(controllerClass, "instance", "Instance");
+            fRecipes = findMapField(controllerClass, "carpentryRecipes", "anvilRecipes");
+            fGlobal = findFieldOptional(controllerClass, "globalRecipes");
+            fId = findFieldOptional(recipeClass, "id", "field_6");
+            fName = findFieldOptional(recipeClass, "name");
+            fWidth = findFieldOptional(recipeClass, "recipeWidth", "field_77576_b");
+            fHeight = findFieldOptional(recipeClass, "recipeHeight", "field_77577_c");
+            fOutput = findFieldOptional(recipeClass, "recipeOutput", "field_77579_d");
+            fIgnoreDamage = findFieldOptional(recipeClass, "ignoreDamage");
+            fIgnoreNBT = findFieldOptional(recipeClass, "ignoreNBT");
+            mOutput = findMethodByName(recipeClass, "getRecipeOutput", "func_77571_b", "getResult");
+            mWidth = findMethodByName(recipeClass, "getWidth");
+            mHeight = findMethodByName(recipeClass, "getHeight");
+            mCraftingItem = findMethodByName(recipeClass, "getCraftingItem");
             available = true;
-            CraftingViewMod.LOG.info(
-                "RecipeAccess bound: recipe={}, singleton={}, map={}",
-                recipeClass.getName(),
-                fControllerInstance.getName(),
-                fRecipeMap.getName());
+            CraftingViewMod.LOG.info("RecipeAccess bound to {} / {}", controllerClass.getName(), recipeClass.getName());
         } catch (Throwable t) {
             available = false;
             CraftingViewMod.LOG.error("RecipeAccess probe failed; recipe panel disabled", t);
@@ -93,165 +66,328 @@ public final class RecipeAccess {
         return available;
     }
 
-    /**
-     * 获取 RecipeController 单例并缓存。首次调用后缓存，避免每帧反射开销。
-     * 注意：必须在 GUI 打开后调用（单例懒加载），preInit 时单例可能为 null。
-     */
-    private static Object getControllerInstance() {
-        if (cachedControllerInstance == null && available) {
-            try {
-                cachedControllerInstance = fControllerInstance.get(null);
-                if (cachedControllerInstance != null) {
-                    // 同时缓存配方 Map
-                    cachedRecipeMap = (Map<?, ?>) fRecipeMap.get(cachedControllerInstance);
-                }
-            } catch (Throwable t) {
-                CraftingViewMod.LOG.warn("Failed to get RecipeController instance", t);
-            }
-        }
-        return cachedControllerInstance;
+    public static boolean isGlobalAvailable() {
+        return available && fGlobal != null;
     }
 
-    /** 读取宿主全部木工台/铁砧配方并包装。不可用或单例未就绪时返回空列表。 */
-    public static List<RecipeView> getAllCarpentryRecipes() {
-        List<RecipeView> out = new ArrayList<>();
-        if (!available) return out;
-        try {
-            Object ctrl = getControllerInstance();
-            if (ctrl == null) return out;
-
-            // 使用缓存的 Map，避免每次反射
-            Map<?, ?> map = cachedRecipeMap;
-            if (map == null) {
-                map = (Map<?, ?>) fRecipeMap.get(ctrl);
-                cachedRecipeMap = map;
-            }
-
-            if (map == null) return out;
-            for (Object recipe : map.values()) {
-                if (recipe != null) out.add(new RecipeView(recipe));
-            }
-        } catch (Throwable t) {
-            CraftingViewMod.LOG.warn("getAllCarpentryRecipes failed", t);
-        }
-        return out;
-    }
-
-    /** 按 id 取单个配方并包装。不可用、单例未就绪或未找到时返回 null。 */
-    public static RecipeView getRecipeById(int id) {
+    private static Object controller() {
         if (!available) return null;
         try {
-            Object ctrl = getControllerInstance();
-            if (ctrl == null) return null;
-
-            // 直接调用 RecipeController.getRecipe(int) - AT 已暴露此方法
-            // 注意：返回类型是 Object（因 RecipeCarpentry FQN 不定），需强转
-            Object recipe = RecipeController.class.getMethod("getRecipe", int.class)
-                .invoke(ctrl, id);
-            return recipe == null ? null : new RecipeView(recipe);
-        } catch (Throwable t) {
-            CraftingViewMod.LOG.warn("getRecipeById failed: id={}", id, t);
+            if (controller == null) {
+                controller = fController.get(null);
+                if (controller != null) {
+                    recipes = asMap(fRecipes.get(controller));
+                    globalRecipes = fGlobal == null ? null : asMap(fGlobal.get(controller));
+                }
+            }
+            return controller;
+        } catch (Throwable ignored) {
             return null;
         }
     }
 
-    // --- 供 RecipeView 读取每帧变动数据（优化：缓存 Method 避免重复 invoke 开销）---
-
-    static ItemStack readOutput(Object delegate) {
-        if (delegate == null || mGetRecipeOutput == null) return null;
+    private static Map<?, ?> map(boolean global) {
+        if (controller() == null) return null;
         try {
-            return (ItemStack) mGetRecipeOutput.invoke(delegate);
-        } catch (Throwable t) {
+            if (global && globalRecipes == null && fGlobal != null) globalRecipes = asMap(fGlobal.get(controller));
+            if (!global && recipes == null) recipes = asMap(fRecipes.get(controller));
+            return global ? globalRecipes : recipes;
+        } catch (Throwable ignored) {
             return null;
         }
     }
 
-    static ItemStack readCraftItem(Object delegate, int index) {
-        if (delegate == null || mGetCraftingItem == null) return null;
+    private static List<RecipeView> wrap(Map<?, ?> map) {
+        List<RecipeView> result = new ArrayList<RecipeView>();
+        if (map != null) for (Object value : map.values()) if (value != null) result.add(new RecipeView(value));
+        return result;
+    }
+
+    public static List<RecipeView> getAllCarpentryRecipes() {
+        return wrap(map(false));
+    }
+
+    public static List<RecipeView> getAllGlobalRecipes() {
+        return wrap(map(true));
+    }
+
+    public static RecipeView getRecipeById(int id) {
+        Object c = controller();
+        if (c == null) return null;
         try {
-            return (ItemStack) mGetCraftingItem.invoke(delegate, index);
-        } catch (Throwable t) {
-            return null;
+            if (mGetRecipe == null) mGetRecipe = findMethod(controllerClass, "getRecipe", int.class);
+            Object value = mGetRecipe.invoke(c, Integer.valueOf(id));
+            return value == null ? null : new RecipeView(value);
+        } catch (Throwable ignored) {
+            Map<?, ?> m = map(false);
+            Object value = m == null ? null : m.get(Integer.valueOf(id));
+            return value == null ? null : new RecipeView(value);
         }
     }
 
-    // --- 供 RecipeView 构造时读取不变字段（优化：直接字段访问）---
-
-    static int readInt(Object delegate, Field f, int fallback) {
-        if (delegate == null || f == null) return fallback;
-        try {
-            return f.getInt(delegate);
-        } catch (Throwable t) {
-            return fallback;
-        }
+    public static RecipeView getGlobalRecipeById(int id) {
+        Map<?, ?> m = map(true);
+        Object value = m == null ? null : m.get(Integer.valueOf(id));
+        return value == null ? null : new RecipeView(value);
     }
 
-    static boolean readBool(Object delegate, Field f) {
-        if (delegate == null || f == null) return false;
+    public static boolean isCarpentryGui(Object gui) {
+        if (gui == null) return false;
         try {
-            return f.getBoolean(delegate);
-        } catch (Throwable t) {
+            if (guiClass == null) guiClass = findClass(GUIS);
+            return guiClass.isInstance(gui);
+        } catch (Throwable ignored) {
             return false;
         }
     }
 
-    static Object readObj(Object delegate, Field f) {
-        if (delegate == null || f == null) return null;
+    public static boolean isCarpentryContainer(Object container) {
+        if (container == null) return false;
         try {
-            return f.get(delegate);
-        } catch (Throwable t) {
+            if (containerClass == null) {
+                containerClass = findClass(CONTAINERS);
+                fCraftMatrix = findFieldOptional(containerClass, "craftMatrix");
+                mMetadata = findMethodByName(containerClass, "getMetadata");
+                mChanged = findInventoryCallback(containerClass);
+                mDetect = findMethodByName(containerClass, "detectAndSendChanges", "func_75132_a");
+            }
+            return containerClass.isInstance(container);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    public static IInventory getCraftMatrix(Object container) {
+        if (!isCarpentryContainer(container) || fCraftMatrix == null) return null;
+        try {
+            return (IInventory) fCraftMatrix.get(container);
+        } catch (Throwable ignored) {
             return null;
         }
     }
 
-    // --- 探测工具 ---
+    public static int getContainerMetadata(Object container) {
+        if (!isCarpentryContainer(container) || mMetadata == null) return 0;
+        try {
+            return ((Number) mMetadata.invoke(container)).intValue();
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
 
-    private static Class<?> tryClass(String... names) throws ClassNotFoundException {
-        for (String n : names) {
-            try {
-                return Class.forName(n);
-            } catch (ClassNotFoundException ignored) {
-                // 尝试下一个候选
+    public static void notifyContainer(Object container, IInventory matrix) {
+        try {
+            if (mChanged != null) mChanged.invoke(container, matrix);
+        } catch (Throwable ignored) {}
+        try {
+            if (mDetect != null) mDetect.invoke(container);
+        } catch (Throwable ignored) {}
+    }
+
+    public static boolean isNbtSyncAvailable() {
+        return available;
+    }
+
+    public static NBTTagCompound writeRecipeNBT(RecipeView recipe) {
+        if (recipe == null) return null;
+        NBTTagCompound tag = new NBTTagCompound();
+        tag.setInteger("id", recipe.id);
+        tag.setString("name", recipe.name == null ? "" : recipe.name);
+        tag.setInteger("width", recipe.recipeWidth);
+        tag.setInteger("height", recipe.recipeHeight);
+        tag.setBoolean("ignoreDamage", recipe.ignoreDamage);
+        tag.setBoolean("ignoreNBT", recipe.ignoreNBT);
+        ItemStack output = recipe.getRecipeOutput();
+        if (output != null) tag.setTag("output", output.writeToNBT(new NBTTagCompound()));
+        NBTTagList items = new NBTTagList();
+        int count = Math.max(0, recipe.recipeWidth * recipe.recipeHeight);
+        for (int i = 0; i < count; i++) {
+            ItemStack stack = recipe.getCraftingItem(i);
+            if (stack != null) {
+                NBTTagCompound item = new NBTTagCompound();
+                item.setByte("slot", (byte) i);
+                item.setTag("stack", stack.writeToNBT(new NBTTagCompound()));
+                items.appendTag(item);
             }
         }
-        throw new ClassNotFoundException(String.join(" / ", names));
+        tag.setTag("items", items);
+        return tag;
     }
 
-    /** 逐候选名探测字段：先 public（getField），失败回退 declared + setAccessible。 */
-    private static Field tryField(Class<?> c, String... names) throws NoSuchFieldException {
-        for (String n : names) {
-            try {
-                Field f = c.getField(n);
-                f.setAccessible(true);
-                return f;
-            } catch (NoSuchFieldException e) {
-                try {
-                    Field f = c.getDeclaredField(n);
-                    f.setAccessible(true);
-                    return f;
-                } catch (NoSuchFieldException ignored) {
-                    // 尝试下一个候选
-                }
+    public static RecipeView readRecipeNBT(NBTTagCompound tag) {
+        if (tag == null || recipeClass == null) return null;
+        try {
+            int id = tag.getInteger("id");
+            String name = tag.getString("name");
+            int width = tag.getInteger("width");
+            int height = tag.getInteger("height");
+            ItemStack output = tag.hasKey("output", 10) ? ItemStack.loadItemStackFromNBT(tag.getCompoundTag("output"))
+                : null;
+            Object recipe = constructRecipe(id, width, height, output, name);
+            if (recipe == null) return null;
+            set(fId, recipe, Integer.valueOf(id));
+            set(fName, recipe, name);
+            set(fWidth, recipe, Integer.valueOf(width));
+            set(fHeight, recipe, Integer.valueOf(height));
+            set(fOutput, recipe, output);
+            set(fIgnoreDamage, recipe, Boolean.valueOf(tag.getBoolean("ignoreDamage")));
+            set(fIgnoreNBT, recipe, Boolean.valueOf(tag.getBoolean("ignoreNBT")));
+            Method setter = findMethodWithParams(recipeClass, "setCraftingItem", int.class, ItemStack.class);
+            NBTTagList items = tag.getTagList("items", 10);
+            for (int i = 0; setter != null && i < items.tagCount(); i++) {
+                NBTTagCompound item = items.getCompoundTagAt(i);
+                ItemStack stack = ItemStack.loadItemStackFromNBT(item.getCompoundTag("stack"));
+                if (stack != null) setter.invoke(recipe, Integer.valueOf(item.getByte("slot")), stack);
             }
+            return new RecipeView(recipe);
+        } catch (Throwable t) {
+            CraftingViewMod.LOG.warn("readRecipeNBT failed", t);
+            return null;
         }
-        throw new NoSuchFieldException(c.getName() + ": " + String.join(" / ", names));
     }
 
-    private static Field field(Class<?> c, String name) throws NoSuchFieldException {
-        return tryField(c, name);
+    private static Object constructRecipe(int id, int width, int height, ItemStack output, String name)
+        throws Exception {
+        try {
+            Constructor<?> c = recipeClass.getDeclaredConstructor();
+            c.setAccessible(true);
+            return c.newInstance();
+        } catch (NoSuchMethodException ignored) {}
+        try {
+            Constructor<?> c = recipeClass.getConstructor(int.class, int.class, ItemStack[].class, ItemStack.class);
+            return c.newInstance(width, height, new ItemStack[Math.max(0, width * height)], output);
+        } catch (NoSuchMethodException ignored) {}
+        Constructor<?> c = recipeClass.getConstructor(String.class);
+        return c.newInstance(name);
     }
 
-    /** 逐候选名探测无参方法：getMethod 沿父类查找 public 方法，覆盖继承自 ShapedRecipes 的成员。 */
-    private static Method tryMethod(Class<?> c, String... names) throws NoSuchMethodException {
-        for (String n : names) {
-            try {
-                Method m = c.getMethod(n);
+    static ItemStack readOutput(Object recipe) {
+        try {
+            if (mOutput != null) return (ItemStack) mOutput.invoke(recipe);
+            return fOutput == null ? null : (ItemStack) fOutput.get(recipe);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    static ItemStack readCraftItem(Object recipe, int index) {
+        try {
+            return mCraftingItem == null ? null : (ItemStack) mCraftingItem.invoke(recipe, Integer.valueOf(index));
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    static int readInt(Object recipe, Field field, int fallback) {
+        try {
+            if (field != null) return field.getInt(recipe);
+        } catch (Throwable ignored) {}
+        try {
+            if (field != null && field == fWidth && mWidth != null) return ((Number) mWidth.invoke(recipe)).intValue();
+            if (field != null && field == fHeight && mHeight != null)
+                return ((Number) mHeight.invoke(recipe)).intValue();
+        } catch (Throwable ignored) {}
+        return fallback;
+    }
+
+    static boolean readBool(Object recipe, Field field) {
+        try {
+            return field != null && field.getBoolean(recipe);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    static Object readObj(Object recipe, Field field) {
+        try {
+            return field == null ? null : field.get(recipe);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void set(Field field, Object target, Object value) {
+        try {
+            if (field != null) field.set(target, value);
+        } catch (Throwable ignored) {}
+    }
+
+    private static Method findInventoryCallback(Class<?> c) {
+        for (Method m : c.getMethods()) {
+            Class<?>[] p = m.getParameterTypes();
+            if (p.length == 1 && IInventory.class.isAssignableFrom(p[0])
+                && (m.getName()
+                    .equals("onCraftMatrixChanged")
+                    || m.getName()
+                        .equals("func_75130_a")
+                    || m.getName()
+                        .equals("a"))) {
                 m.setAccessible(true);
                 return m;
-            } catch (NoSuchMethodException ignored) {
-                // 尝试下一个候选
             }
         }
-        throw new NoSuchMethodException(c.getName() + ": " + String.join(" / ", names));
+        return null;
+    }
+
+    private static Class<?> findClass(String... names) throws ClassNotFoundException {
+        for (String name : names) try {
+            return Class.forName(name);
+        } catch (ClassNotFoundException ignored) {}
+        throw new ClassNotFoundException(names[0]);
+    }
+
+    private static Field findField(Class<?> c, String... names) throws NoSuchFieldException {
+        Field f = findFieldOptional(c, names);
+        if (f == null) throw new NoSuchFieldException(c.getName());
+        return f;
+    }
+
+    private static Field findFieldOptional(Class<?> c, String... names) {
+        for (String name : names) {
+            try {
+                Field f = c.getField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (Throwable ignored) {}
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (Throwable ignored) {}
+        }
+        return null;
+    }
+
+    private static Field findMapField(Class<?> c, String... names) throws NoSuchFieldException {
+        Field f = findField(c, names);
+        if (!Map.class.isAssignableFrom(f.getType())) throw new NoSuchFieldException(c.getName());
+        return f;
+    }
+
+    private static Method findMethod(Class<?> c, String name, Class<?>... params) throws NoSuchMethodException {
+        Method m = c.getMethod(name, params);
+        m.setAccessible(true);
+        return m;
+    }
+
+    private static Method findMethodByName(Class<?> c, String... names) {
+        for (String name : names) for (Method m : c.getMethods()) if (m.getName()
+            .equals(name)) {
+                m.setAccessible(true);
+                return m;
+            }
+        return null;
+    }
+
+    private static Method findMethodWithParams(Class<?> c, String name, Class<?>... params) {
+        try {
+            return findMethod(c, name, params);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Map<?, ?> asMap(Object value) {
+        return value instanceof Map ? (Map<?, ?>) value : null;
     }
 }
