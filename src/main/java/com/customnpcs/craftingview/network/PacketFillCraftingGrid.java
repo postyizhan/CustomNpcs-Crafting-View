@@ -37,19 +37,29 @@ public class PacketFillCraftingGrid implements IMessage {
 
         @Override
         public IMessage onMessage(final PacketFillCraftingGrid msg, final MessageContext ctx) {
-            // SimpleNetworkWrapper handlers on Side.SERVER run on the main server thread
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
-            Container openContainer = player.openContainer;
-            if (!RecipeAccess.isCarpentryContainer(openContainer)) return null;
+            final EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            final int requestedRecipeId = msg.recipeId;
+            NetworkTaskQueue.enqueueServer(new Runnable() {
+                @Override
+                public void run() {
+                    process(player, requestedRecipeId);
+                }
+            });
+            return null;
+        }
 
-            RecipeView recipe = RecipeAccess.getRecipeById(msg.recipeId);
+        private void process(EntityPlayerMP player, int recipeId) {
+            Container openContainer = player.openContainer;
+            if (!RecipeAccess.isCarpentryContainer(openContainer)) return;
+
+            RecipeView recipe = RecipeAccess.getRecipeById(recipeId);
             if (recipe == null) {
-                CraftingViewMod.LOG.warn("Recipe not found: id={}", msg.recipeId);
-                return null;
+                CraftingViewMod.LOG.warn("Recipe not found: id={}", recipeId);
+                return;
             }
 
             net.minecraft.inventory.IInventory matrix = RecipeAccess.getCraftMatrix(openContainer);
-            if (matrix == null) return null;
+            if (matrix == null) return;
 
             // Map recipeWidth x recipeHeight items into the 4x4 crafting grid
             int rw = recipe.recipeWidth;
@@ -81,7 +91,6 @@ public class PacketFillCraftingGrid implements IMessage {
             }
 
             RecipeAccess.notifyContainer(openContainer, matrix);
-            return null;
         }
 
         private void returnToInventory(EntityPlayerMP player, ItemStack stack) {

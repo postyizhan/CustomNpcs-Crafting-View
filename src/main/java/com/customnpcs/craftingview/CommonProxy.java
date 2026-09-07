@@ -3,13 +3,16 @@ package com.customnpcs.craftingview;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.customnpcs.craftingview.network.PacketHandler;
+import com.customnpcs.craftingview.network.NetworkTaskQueue;
 
+import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 
 public class CommonProxy {
 
     public void init(FMLInitializationEvent event) {
         PacketHandler.init();
+        FMLCommonHandler.instance().bus().register(NetworkTaskQueue.INSTANCE);
     }
 
     /**

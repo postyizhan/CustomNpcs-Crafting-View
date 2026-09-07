@@ -15,18 +15,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
 
-/**
- * 服务端 → 客户端：同步宿主的全局（3x3 工作台）配方集合。
- *
- * <p>
- * 暮色拆解台面板展示的是宿主 {@code RecipeController.globalRecipes}。该集合在专用服务器上仅存在于
- * 服务端，客户端本地读不到，故需由服务端序列化后下发。单机/局域网主机两端同进程，走同一通路以保持
- * 行为一致。
- *
- * <p>
- * 配方以宿主自身的 NBT 格式透传（{@link RecipeAccess#writeRecipeNBT}），本 mod 不解析其内部字段，
- * 从而无需关心两宿主 RecipeCarpentry 的字段差异。
- */
+/** Server-to-client snapshot of the host's global 3x3 recipes. */
 public class PacketSyncGlobalRecipes implements IMessage {
 
     private static final String TAG_RECIPES = "Recipes";
@@ -39,7 +28,6 @@ public class PacketSyncGlobalRecipes implements IMessage {
         this.payload = payload;
     }
 
-    /** 从宿主当前全局配方构建同步包。NBT 序列化不可用时返回 null（调用方应跳过发送）。 */
     public static PacketSyncGlobalRecipes ofCurrentRecipes() {
         if (!RecipeAccess.isNbtSyncAvailable()) return null;
 
@@ -55,10 +43,9 @@ public class PacketSyncGlobalRecipes implements IMessage {
         return new PacketSyncGlobalRecipes(root);
     }
 
-    /** 从同步载荷中取出配方 NBT 列表。 */
     public static NBTTagList extractRecipeList(NBTTagCompound payload) {
         if (payload == null) return new NBTTagList();
-        return payload.getTagList(TAG_RECIPES, 10); // 10 = TAG_Compound
+        return payload.getTagList(TAG_RECIPES, 10);
     }
 
     @Override
@@ -80,8 +67,13 @@ public class PacketSyncGlobalRecipes implements IMessage {
         @Override
         public IMessage onMessage(PacketSyncGlobalRecipes msg, MessageContext ctx) {
             if (msg.payload == null) return null;
-            // 客户端解析交由 proxy 分派，避免服务端类路径触及 client 包
-            CraftingViewMod.proxy.handleGlobalRecipeSync(msg.payload);
+            final NBTTagCompound payload = msg.payload;
+            NetworkTaskQueue.enqueueClient(new Runnable() {
+                @Override
+                public void run() {
+                    CraftingViewMod.proxy.handleGlobalRecipeSync(payload);
+                }
+            });
             return null;
         }
     }

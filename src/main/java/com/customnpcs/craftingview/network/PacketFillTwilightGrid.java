@@ -50,24 +50,33 @@ public class PacketFillTwilightGrid implements IMessage {
 
         @Override
         public IMessage onMessage(PacketFillTwilightGrid msg, MessageContext ctx) {
-            // SimpleNetworkWrapper handlers on Side.SERVER run on the main server thread
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            final EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            final int requestedRecipeId = msg.recipeId;
+            NetworkTaskQueue.enqueueServer(new Runnable() {
+                @Override
+                public void run() {
+                    process(player, requestedRecipeId);
+                }
+            });
+            return null;
+        }
+
+        private void process(EntityPlayerMP player, int recipeId) {
             Container openContainer = player.openContainer;
-            if (!TwilightAccess.isUncraftingContainer(openContainer)) return null;
+            if (!TwilightAccess.isUncraftingContainer(openContainer)) return;
 
             IInventory assembly = TwilightAccess.getAssemblyMatrix(openContainer);
-            if (assembly == null) return null;
+            if (assembly == null) return;
 
-            RecipeView recipe = RecipeAccess.getGlobalRecipeById(msg.recipeId);
+            RecipeView recipe = RecipeAccess.getGlobalRecipeById(recipeId);
             if (recipe == null) {
-                CraftingViewMod.LOG.warn("Global recipe not found: id={}", msg.recipeId);
-                return null;
+                CraftingViewMod.LOG.warn("Global recipe not found: id={}", recipeId);
+                return;
             }
 
             fill(player, assembly, recipe);
 
             TwilightAccess.notifyContainer(openContainer, assembly);
-            return null;
         }
 
         /**
