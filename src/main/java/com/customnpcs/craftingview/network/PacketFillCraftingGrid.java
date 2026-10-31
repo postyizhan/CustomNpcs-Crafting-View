@@ -180,30 +180,42 @@ public class PacketFillCraftingGrid implements IMessage {
 
         private ItemStack findAndTake(EntityPlayerMP player, ItemStack required, int amount, boolean ignoreDamage,
             boolean ignoreNBT) {
-            ItemStack result = null;
-
-            for (int invSlot = 0; invSlot < player.inventory.mainInventory.length && amount > 0; invSlot++) {
+            // First pass: verify enough exact stacks are available without consuming anything.
+            ItemStack template = null;
+            int available = 0;
+            for (int invSlot = 0; invSlot < player.inventory.mainInventory.length; invSlot++) {
                 ItemStack stack = player.inventory.mainInventory[invSlot];
                 if (stack == null || !matches(stack, required, ignoreDamage, ignoreNBT)) continue;
 
-                if (result == null) {
-                    result = stack.copy();
-                    result.stackSize = 0;
-                } else if (!sameStack(result, stack)) {
-                    // Do not merge differently damaged / NBT-tagged stacks into one template stack.
+                if (template == null) {
+                    template = stack.copy();
+                    template.stackSize = 0;
+                } else if (!sameStack(template, stack)) {
                     continue;
                 }
+                available += stack.stackSize;
+                if (available >= amount) break;
+            }
+            if (template == null || available < amount) return null;
 
-                int take = Math.min(amount, stack.stackSize);
+            // Second pass: consume only after success is guaranteed.
+            ItemStack result = template.copy();
+            result.stackSize = 0;
+            int remaining = amount;
+            for (int invSlot = 0; invSlot < player.inventory.mainInventory.length && remaining > 0; invSlot++) {
+                ItemStack stack = player.inventory.mainInventory[invSlot];
+                if (stack == null || !sameStack(template, stack)) continue;
+
+                int take = Math.min(remaining, stack.stackSize);
                 result.stackSize += take;
-                amount -= take;
+                remaining -= take;
                 stack.stackSize -= take;
                 if (stack.stackSize <= 0) {
                     player.inventory.mainInventory[invSlot] = null;
                 }
             }
 
-            return amount > 0 ? null : result;
+            return result;
         }
 
         private boolean sameStack(ItemStack a, ItemStack b) {
