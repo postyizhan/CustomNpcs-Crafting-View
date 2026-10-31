@@ -1,10 +1,12 @@
 package com.customnpcs.craftingview.client;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.audio.PositionedSoundRecord;
 import net.minecraft.client.gui.inventory.GuiContainer;
+import net.minecraft.client.gui.inventory.GuiCrafting;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.GuiScreenEvent;
@@ -23,7 +25,6 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
 import noppes.npcs.client.gui.player.GuiNpcCarpentryBench;
-import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
 import noppes.npcs.containers.ContainerCarpentryBench;
 
 @SideOnly(Side.CLIENT)
@@ -56,6 +57,13 @@ public class GuiEventHandler {
             } else {
                 activePanel = null;
             }
+        } else if (event.gui instanceof GuiCrafting) {
+            if (RecipeAccess.isAvailable()) {
+                activePanel = new RecipePanel(false, true);
+                lastLeftDown = false;
+            } else {
+                activePanel = null;
+            }
         } else {
             activePanel = null;
         }
@@ -64,9 +72,9 @@ public class GuiEventHandler {
     @SubscribeEvent
     public void onGuiDrawPost(GuiScreenEvent.DrawScreenEvent.Post event) {
         if (activePanel == null) return;
-        if (!(event.gui instanceof GuiContainerNPCInterface)) return;
+        if (!(event.gui instanceof GuiContainer)) return;
 
-        GuiContainerNPCInterface gui = (GuiContainerNPCInterface) event.gui;
+        GuiContainer gui = (GuiContainer) event.gui;
 
         int mx = event.mouseX;
         int my = event.mouseY;
@@ -77,9 +85,9 @@ public class GuiEventHandler {
         handleKeyInput();
     }
 
-    private void handleMouseInput(GuiContainerNPCInterface gui, int mx, int my) {
-        int guiLeft = gui.guiLeft;
-        int guiTop = gui.guiTop;
+    private void handleMouseInput(GuiContainer gui, int mx, int my) {
+        int guiLeft = readInt(gui, "guiLeft", "field_147003_i");
+        int guiTop = readInt(gui, "guiTop", "field_147009_r");
 
         boolean leftDown = Mouse.isButtonDown(0);
         boolean clicked = leftDown && !lastLeftDown;
@@ -161,5 +169,20 @@ public class GuiEventHandler {
         Minecraft.getMinecraft()
             .getSoundHandler()
             .playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
+    }
+
+    private static int readInt(GuiContainer gui, String mcpName, String srgName) {
+        try {
+            Field f;
+            try {
+                f = GuiContainer.class.getDeclaredField(mcpName);
+            } catch (NoSuchFieldException ignored) {
+                f = GuiContainer.class.getDeclaredField(srgName);
+            }
+            f.setAccessible(true);
+            return f.getInt(gui);
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 }
