@@ -167,6 +167,35 @@ public final class RecipeAccess {
         return out;
     }
 
+    /** 按 id 取单个原版工作台配方；找不到或宿主没有 globalRecipes 时返回 null。 */
+    public static RecipeView getWorkbenchRecipeById(int id) {
+        if (!available || fWorkbenchMap == null) return null;
+        try {
+            Object ctrl = getControllerInstance();
+            if (ctrl == null) return null;
+
+            Map<?, ?> map = cachedWorkbenchMap;
+            if (map == null) {
+                map = (Map<?, ?>) fWorkbenchMap.get(ctrl);
+                cachedWorkbenchMap = map;
+            }
+            if (map == null) return null;
+
+            Object direct = map.get(id);
+            if (direct != null) return new RecipeView(direct);
+
+            // Be tolerant of hosts that key the map by something other than Integer.
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() instanceof Number && ((Number) entry.getKey()).intValue() == id) {
+                    return entry.getValue() == null ? null : new RecipeView(entry.getValue());
+                }
+            }
+        } catch (Throwable t) {
+            CraftingViewMod.LOG.warn("getWorkbenchRecipeById failed: id={}", id, t);
+        }
+        return null;
+    }
+
     /** 按 id 取单个配方并包装。不可用、单例未就绪或未找到时返回 null。 */
     public static RecipeView getRecipeById(int id) {
         if (!available) return null;
