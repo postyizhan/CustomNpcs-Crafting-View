@@ -40,33 +40,46 @@ public class PacketFillCraftingGrid implements IMessage {
 
         @Override
         public IMessage onMessage(final PacketFillCraftingGrid msg, final MessageContext ctx) {
-            // SimpleNetworkWrapper handlers on Side.SERVER run on the main server thread
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            // SimpleNetworkWrapper handlers run on the network thread in 1.7.10.
+            final EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            final Handler handler = this;
+            ServerTaskQueue.execute(new Runnable() {
+                @Override
+                public void run() {
+                    handler.fillOnServer(player, msg.recipeId);
+                }
+            });
+            return null;
+        }
+
+        private void fillOnServer(EntityPlayerMP player, int recipeId) {
+            if (player == null || player.isDead) return;
             Container openContainer = player.openContainer;
-            if (openContainer == null) return null;
+            if (openContainer == null) return;
 
             // The client can only fill the container it currently has open.
             if (openContainer instanceof ContainerWorkbench && !openContainer.canInteractWith(player)) {
-                return null;
+                return;
             }
 
-            RecipeView recipe = RecipeAccess.getRecipeById(msg.recipeId);
+            RecipeView recipe;
+            if (openContainer instanceof ContainerWorkbench) {
+                recipe = RecipeAccess.getWorkbenchRecipeById(recipeId);
+            } else {
+                recipe = RecipeAccess.getRecipeById(recipeId);
+            }
             if (recipe == null) {
-                CraftingViewMod.LOG.warn("Recipe not found: id={}", msg.recipeId);
-                return null;
+                CraftingViewMod.LOG.warn("Recipe not found: id={}", recipeId);
+                return;
             }
 
             if (openContainer instanceof ContainerCarpentryBench) {
                 ContainerCarpentryBench container = (ContainerCarpentryBench) openContainer;
                 fill(player, container, container.craftMatrix, 4, recipe);
-                return null;
-            }
-            if (openContainer instanceof ContainerWorkbench) {
+            } else if (openContainer instanceof ContainerWorkbench) {
                 ContainerWorkbench container = (ContainerWorkbench) openContainer;
                 fill(player, container, container.craftMatrix, 3, recipe);
-                return null;
             }
-            return null;
         }
 
         private void fill(EntityPlayerMP player, Container container, InventoryCrafting matrix, int columns,
@@ -167,12 +180,19 @@ public class PacketFillCraftingGrid implements IMessage {
 
         private ItemStack findAndTake(EntityPlayerMP player, ItemStack required, int amount, boolean ignoreDamage,
             boolean ignoreNBT) {
-            ItemStack result = required.copy();
-            result.stackSize = 0;
+            ItemStack result = null;
 
             for (int invSlot = 0; invSlot < player.inventory.mainInventory.length && amount > 0; invSlot++) {
                 ItemStack stack = player.inventory.mainInventory[invSlot];
                 if (stack == null || !matches(stack, required, ignoreDamage, ignoreNBT)) continue;
+
+                if (result == null) {
+                    result = stack.copy();
+                    result.stackSize = 0;
+                } else if (!sameStack(result, stack)) {
+                    // Do not merge differently damaged / NBT-tagged stacks into one template stack.
+                    continue;
+                }
 
                 int take = Math.min(amount, stack.stackSize);
                 result.stackSize += take;
@@ -184,6 +204,13 @@ public class PacketFillCraftingGrid implements IMessage {
             }
 
             return amount > 0 ? null : result;
+        }
+
+        private boolean sameStack(ItemStack a, ItemStack b) {
+            if (a.getItem() != b.getItem() || a.getItemDamage() != b.getItemDamage()) return false;
+            if (a.hasTagCompound() != b.hasTagCompound()) return false;
+            return !a.hasTagCompound() || a.getTagCompound()
+                .equals(b.getTagCompound());
         }
 
         private boolean matches(ItemStack stack, ItemStack required, boolean ignoreDamage, boolean ignoreNBT) {
