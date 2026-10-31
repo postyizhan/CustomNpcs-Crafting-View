@@ -4,11 +4,13 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.customnpcs.craftingview.compat.RecipeAccess;
+import com.customnpcs.craftingview.network.ServerTaskQueue;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
+import net.minecraftforge.common.MinecraftForge;
 
 @Mod(
     modid = CraftingViewMod.MODID,
@@ -30,6 +32,7 @@ public class CraftingViewMod {
     public void preInit(FMLPreInitializationEvent event) {
         Config.load(event.getSuggestedConfigurationFile());
         RecipeAccess.init();
+        MinecraftForge.EVENT_BUS.register(new ServerTaskQueue());
     }
 
     @Mod.EventHandler
