@@ -10,7 +10,7 @@ import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
-import net.minecraftforge.common.MinecraftForge;
+import cpw.mods.fml.common.FMLCommonHandler;
 
 @Mod(
     modid = CraftingViewMod.MODID,
@@ -32,7 +32,7 @@ public class CraftingViewMod {
     public void preInit(FMLPreInitializationEvent event) {
         Config.load(event.getSuggestedConfigurationFile());
         RecipeAccess.init();
-        MinecraftForge.EVENT_BUS.register(new ServerTaskQueue());
+        FMLCommonHandler.instance().bus().register(new ServerTaskQueue());
     }
 
     @Mod.EventHandler
