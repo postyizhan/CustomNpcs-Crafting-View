@@ -44,6 +44,7 @@ public class PacketFillCraftingGrid implements IMessage {
             final EntityPlayerMP player = ctx.getServerHandler().playerEntity;
             final Handler handler = this;
             ServerTaskQueue.execute(new Runnable() {
+
                 @Override
                 public void run() {
                     handler.fillOnServer(player, msg.recipeId);
@@ -159,8 +160,8 @@ public class PacketFillCraftingGrid implements IMessage {
 
                     int need = Math.max(1, required.stackSize) * crafts;
                     for (int i = 0; i < inventory.length && need > 0; i++) {
-                        if (available[i] > 0 && matches(inventory[i], required, recipe.ignoreDamage,
-                            recipe.ignoreNBT)) {
+                        if (available[i] > 0
+                            && matches(inventory[i], required, recipe.ignoreDamage, recipe.ignoreNBT)) {
                             int take = Math.min(need, available[i]);
                             need -= take;
                             available[i] -= take;

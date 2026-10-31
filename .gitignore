@@ -42,3 +42,5 @@ npc_code/
 .playwright-mcp/
 .mcp.json
 AGENTS.md
+
+runs/

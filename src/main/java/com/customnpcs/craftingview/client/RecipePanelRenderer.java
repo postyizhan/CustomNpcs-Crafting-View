@@ -110,7 +110,16 @@ public class RecipePanelRenderer {
             int columns = panel.isWorkbench() ? 3 : 4;
             int overlayHeight = overlayHeight(columns);
             // 优化：传递 gui.height 避免每次创建 ScaledResolution
-            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, columns, mouseX, mouseY, fr, gui.height,
+            ItemStack overlayTip = drawIngredientOverlay(
+                px,
+                pw,
+                rowY,
+                sel,
+                columns,
+                mouseX,
+                mouseY,
+                fr,
+                gui.height,
                 mc);
             // 浮层盖在列表行之上：鼠标落在浮层矩形内时，tooltip 由浮层决定（命中原料则显示该原料，
             // 否则清空），避免被遮住的行产物 tooltip 穿透显示。
@@ -127,7 +136,10 @@ public class RecipePanelRenderer {
     private static int drawHeader(int cx, int px, int cy, int pw, RecipePanel panel, int mouseX, int mouseY,
         FontRenderer fr) {
 
-        fr.drawString(panel.isAnvil() ? "Anvil" : (panel.isWorkbench() ? "Workbench" : "Carpentry"), cx, cy,
+        fr.drawString(
+            panel.isAnvil() ? "Anvil" : (panel.isWorkbench() ? "Workbench" : "Carpentry"),
+            cx,
+            cy,
             COLOR_TEXT);
         cy += 10;
 
@@ -190,8 +202,8 @@ public class RecipePanelRenderer {
      *
      * @param screenHeight GUI 高度，从外部传入避免每帧创建 ScaledResolution
      */
-    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int columns,
-        int mouseX, int mouseY, FontRenderer fr, int screenHeight, Minecraft mc) {
+    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int columns, int mouseX,
+        int mouseY, FontRenderer fr, int screenHeight, Minecraft mc) {
 
         // 方向自适应：贴选中行下方，下方超屏则改贴上方（overlayY 与命中测试共用，保证一致）。
         int overlayHeight = overlayHeight(columns);
