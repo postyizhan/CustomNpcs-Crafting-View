@@ -191,6 +191,10 @@ public class RecipePanel {
         return isAnvil;
     }
 
+    public boolean isWorkbench() {
+        return workbench;
+    }
+
     public int getPanelX(int guiLeft) {
         return guiLeft - PANEL_WIDTH - 4;
     }
