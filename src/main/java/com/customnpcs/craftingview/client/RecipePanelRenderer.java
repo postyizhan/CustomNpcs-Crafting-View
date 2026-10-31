@@ -1,11 +1,13 @@
 package com.customnpcs.craftingview.client;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.inventory.GuiContainer;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderItem;
 import net.minecraft.item.ItemStack;
@@ -18,7 +20,6 @@ import com.customnpcs.craftingview.compat.RecipeView;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
-import noppes.npcs.client.gui.util.GuiContainerNPCInterface;
 
 @SideOnly(Side.CLIENT)
 public class RecipePanelRenderer {
@@ -54,15 +55,15 @@ public class RecipePanelRenderer {
     private static final int LIST_BASE_OFFSET = HEADER_TO_CATS_OFFSET + CATEGORY_TAB_H + 2 + 1 + 3 + 7;
 
     public static void render(GuiScreen gui, RecipePanel panel, int mouseX, int mouseY) {
-        if (!(gui instanceof GuiContainerNPCInterface)) return;
-        GuiContainerNPCInterface container = (GuiContainerNPCInterface) gui;
+        if (!(gui instanceof GuiContainer)) return;
+        GuiContainer container = (GuiContainer) gui;
 
         // 优化：缓存 Minecraft 实例和 FontRenderer，避免重复调用
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer fr = mc.fontRenderer;
 
-        int guiLeft = container.guiLeft;
-        int guiTop = container.guiTop;
+        int guiLeft = readInt(container, "guiLeft", "field_147003_i");
+        int guiTop = readInt(container, "guiTop", "field_147009_r");
 
         int px = panel.getPanelX(guiLeft);
         int py = guiTop;
@@ -106,12 +107,15 @@ public class RecipePanelRenderer {
         int selIdx = panel.getSelectedVisibleIndex();
         if (selIdx >= 0 && sel != null) {
             int rowY = listTop + selIdx * RECIPE_ROW_H;
+            int columns = panel.isWorkbench() ? 3 : 4;
+            int overlayHeight = overlayHeight(columns);
             // 优化：传递 gui.height 避免每次创建 ScaledResolution
-            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, mouseX, mouseY, fr, gui.height, mc);
+            ItemStack overlayTip = drawIngredientOverlay(px, pw, rowY, sel, columns, mouseX, mouseY, fr, gui.height,
+                mc);
             // 浮层盖在列表行之上：鼠标落在浮层矩形内时，tooltip 由浮层决定（命中原料则显示该原料，
             // 否则清空），避免被遮住的行产物 tooltip 穿透显示。
-            int oy = overlayY(rowY, gui.height);
-            boolean overOverlay = mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + OVERLAY_H;
+            int oy = overlayY(rowY, gui.height, overlayHeight);
+            boolean overOverlay = mouseX >= px && mouseX < px + pw && mouseY >= oy && mouseY < oy + overlayHeight;
             if (overOverlay) tooltipStack = overlayTip;
         }
 
@@ -123,7 +127,8 @@ public class RecipePanelRenderer {
     private static int drawHeader(int cx, int px, int cy, int pw, RecipePanel panel, int mouseX, int mouseY,
         FontRenderer fr) {
 
-        fr.drawString(panel.isAnvil() ? "Anvil" : "Carpentry", cx, cy, COLOR_TEXT);
+        fr.drawString(panel.isAnvil() ? "Anvil" : (panel.isWorkbench() ? "Workbench" : "Carpentry"), cx, cy,
+            COLOR_TEXT);
         cy += 10;
 
         panel.searchField.xPosition = cx;
@@ -185,15 +190,16 @@ public class RecipePanelRenderer {
      *
      * @param screenHeight GUI 高度，从外部传入避免每帧创建 ScaledResolution
      */
-    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int mouseX, int mouseY,
-        FontRenderer fr, int screenHeight, Minecraft mc) {
+    private static ItemStack drawIngredientOverlay(int px, int pw, int rowY, RecipeView recipe, int columns,
+        int mouseX, int mouseY, FontRenderer fr, int screenHeight, Minecraft mc) {
 
         // 方向自适应：贴选中行下方，下方超屏则改贴上方（overlayY 与命中测试共用，保证一致）。
-        int oy = overlayY(rowY, screenHeight);
+        int overlayHeight = overlayHeight(columns);
+        int oy = overlayY(rowY, screenHeight, overlayHeight);
 
         int ox = px;
-        drawRect(ox, oy, ox + pw, oy + OVERLAY_H, COLOR_OVERLAY_BG);
-        drawBorder(ox, oy, pw, OVERLAY_H);
+        drawRect(ox, oy, ox + pw, oy + overlayHeight, COLOR_OVERLAY_BG);
+        drawBorder(ox, oy, pw, overlayHeight);
 
         int cx = ox + PADDING;
         int cy = oy + PADDING;
@@ -203,8 +209,8 @@ public class RecipePanelRenderer {
         ItemStack tooltipStack = null;
         int rw = recipe.recipeWidth;
         int rh = recipe.recipeHeight;
-        for (int row = 0; row < 4; row++) {
-            for (int col = 0; col < 4; col++) {
+        for (int row = 0; row < columns; row++) {
+            for (int col = 0; col < columns; col++) {
                 int gx = cx + col * (GRID_CELL + 1);
                 int gy = cy + row * (GRID_CELL + 1);
                 drawRect(gx, gy, gx + GRID_CELL, gy + GRID_CELL, 0xFF333333);
@@ -218,6 +224,10 @@ public class RecipePanelRenderer {
             }
         }
         return tooltipStack;
+    }
+
+    private static int overlayHeight(int columns) {
+        return PADDING + 10 + columns * (GRID_CELL + 1) + PADDING;
     }
 
     private static int calcPanelHeight(RecipePanel panel) {
@@ -348,8 +358,9 @@ public class RecipePanelRenderer {
         // 使用 GuiScreen.height 而非创建 ScaledResolution
         GuiScreen screen = Minecraft.getMinecraft().currentScreen;
         int screenHeight = screen != null ? screen.height : 240; // 240 为降级默认值
-        int oy = overlayY(rowY, screenHeight);
-        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + OVERLAY_H;
+        int overlayHeight = overlayHeight(panel.isWorkbench() ? 3 : 4);
+        int oy = overlayY(rowY, screenHeight, overlayHeight);
+        return mx >= px && mx < px + RecipePanel.PANEL_WIDTH && my >= oy && my < oy + overlayHeight;
     }
 
     /**
@@ -358,11 +369,26 @@ public class RecipePanelRenderer {
      * @param rowY         选中行的 Y 坐标
      * @param screenHeight GUI 高度（从 GuiScreen.height 获取，避免创建 ScaledResolution）
      */
-    private static int overlayY(int rowY, int screenHeight) {
+    private static int overlayY(int rowY, int screenHeight, int overlayHeight) {
         int oy = rowY + RECIPE_ROW_H;
-        if (oy + OVERLAY_H > screenHeight) oy = rowY - OVERLAY_H;
+        if (oy + overlayHeight > screenHeight) oy = rowY - overlayHeight;
         if (oy < 0) oy = 0;
         return oy;
+    }
+
+    private static int readInt(GuiContainer gui, String mcpName, String srgName) {
+        try {
+            Field f;
+            try {
+                f = GuiContainer.class.getDeclaredField(mcpName);
+            } catch (NoSuchFieldException ignored) {
+                f = GuiContainer.class.getDeclaredField(srgName);
+            }
+            f.setAccessible(true);
+            return f.getInt(gui);
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     public static boolean isPanelHit(RecipePanel panel, int guiLeft, int guiTop, int mx, int my) {

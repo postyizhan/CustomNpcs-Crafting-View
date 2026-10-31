@@ -43,10 +43,12 @@ public final class RecipeAccess {
     private static Class<?> recipeClass;
     private static Field fControllerInstance; // static 单例字段：只缓存 Field，每次即时取值
     private static Field fRecipeMap; // 实例字段 anvilRecipes / carpentryRecipes
+    private static Field fWorkbenchMap; // CNPC+ globalRecipes（原版工作台自定义配方）
 
     // 缓存 RecipeController 单例，避免每次反射读取（配合 AT 优化）
     private static Object cachedControllerInstance;
     private static Map<?, ?> cachedRecipeMap;
+    private static Map<?, ?> cachedWorkbenchMap;
 
     // RecipeCarpentry 成员句柄（包级可见，供 RecipeView 读取）
     static Field fId, fName, fWidth, fHeight, fIgnoreDamage, fIgnoreNBT;
@@ -65,6 +67,7 @@ public final class RecipeAccess {
             // 故优先探测 carpentryRecipes：原版无此字段会回退到 anvilRecipes（原版即木工台配方），
             // CNPC+ 命中 carpentryRecipes（装 RecipeCarpentry），两宿主都锁定到正确的 4x4 配方集合。
             fRecipeMap = tryField(RecipeController.class, "carpentryRecipes", "anvilRecipes");
+            fWorkbenchMap = optionalField(RecipeController.class, "globalRecipes");
 
             fId = field(recipeClass, "id");
             fName = field(recipeClass, "name");
@@ -104,6 +107,9 @@ public final class RecipeAccess {
                 if (cachedControllerInstance != null) {
                     // 同时缓存配方 Map
                     cachedRecipeMap = (Map<?, ?>) fRecipeMap.get(cachedControllerInstance);
+                    if (fWorkbenchMap != null) {
+                        cachedWorkbenchMap = (Map<?, ?>) fWorkbenchMap.get(cachedControllerInstance);
+                    }
                 }
             } catch (Throwable t) {
                 CraftingViewMod.LOG.warn("Failed to get RecipeController instance", t);
@@ -135,6 +141,59 @@ public final class RecipeAccess {
             CraftingViewMod.LOG.warn("getAllCarpentryRecipes failed", t);
         }
         return out;
+    }
+
+    /** 读取 CNPC+ 的原版工作台自定义配方。原版 CustomNPCs 或字段不存在时返回空列表。 */
+    public static List<RecipeView> getAllWorkbenchRecipes() {
+        List<RecipeView> out = new ArrayList<>();
+        if (!available || fWorkbenchMap == null) return out;
+        try {
+            Object ctrl = getControllerInstance();
+            if (ctrl == null) return out;
+
+            Map<?, ?> map = cachedWorkbenchMap;
+            if (map == null) {
+                map = (Map<?, ?>) fWorkbenchMap.get(ctrl);
+                cachedWorkbenchMap = map;
+            }
+
+            if (map == null) return out;
+            for (Object recipe : map.values()) {
+                if (recipe != null) out.add(new RecipeView(recipe));
+            }
+        } catch (Throwable t) {
+            CraftingViewMod.LOG.warn("getAllWorkbenchRecipes failed", t);
+        }
+        return out;
+    }
+
+    /** 按 id 取单个原版工作台配方；找不到或宿主没有 globalRecipes 时返回 null。 */
+    public static RecipeView getWorkbenchRecipeById(int id) {
+        if (!available || fWorkbenchMap == null) return null;
+        try {
+            Object ctrl = getControllerInstance();
+            if (ctrl == null) return null;
+
+            Map<?, ?> map = cachedWorkbenchMap;
+            if (map == null) {
+                map = (Map<?, ?>) fWorkbenchMap.get(ctrl);
+                cachedWorkbenchMap = map;
+            }
+            if (map == null) return null;
+
+            Object direct = map.get(id);
+            if (direct != null) return new RecipeView(direct);
+
+            // Be tolerant of hosts that key the map by something other than Integer.
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() instanceof Number && ((Number) entry.getKey()).intValue() == id) {
+                    return entry.getValue() == null ? null : new RecipeView(entry.getValue());
+                }
+            }
+        } catch (Throwable t) {
+            CraftingViewMod.LOG.warn("getWorkbenchRecipeById failed: id={}", id, t);
+        }
+        return null;
     }
 
     /** 按 id 取单个配方并包装。不可用、单例未就绪或未找到时返回 null。 */
@@ -239,6 +298,14 @@ public final class RecipeAccess {
 
     private static Field field(Class<?> c, String name) throws NoSuchFieldException {
         return tryField(c, name);
+    }
+
+    private static Field optionalField(Class<?> c, String name) {
+        try {
+            return tryField(c, name);
+        } catch (NoSuchFieldException ignored) {
+            return null;
+        }
     }
 
     /** 逐候选名探测无参方法：getMethod 沿父类查找 public 方法，覆盖继承自 ShapedRecipes 的成员。 */

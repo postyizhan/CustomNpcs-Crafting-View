@@ -2,6 +2,8 @@ package com.customnpcs.craftingview.network;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.inventory.Container;
+import net.minecraft.inventory.ContainerWorkbench;
+import net.minecraft.inventory.InventoryCrafting;
 import net.minecraft.item.ItemStack;
 
 import com.customnpcs.craftingview.CraftingViewMod;
@@ -38,50 +40,136 @@ public class PacketFillCraftingGrid implements IMessage {
 
         @Override
         public IMessage onMessage(final PacketFillCraftingGrid msg, final MessageContext ctx) {
-            // SimpleNetworkWrapper handlers on Side.SERVER run on the main server thread
-            EntityPlayerMP player = ctx.getServerHandler().playerEntity;
-            Container openContainer = player.openContainer;
-            if (!(openContainer instanceof ContainerCarpentryBench)) return null;
+            // SimpleNetworkWrapper handlers run on the network thread in 1.7.10.
+            final EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            final Handler handler = this;
+            ServerTaskQueue.execute(new Runnable() {
+                @Override
+                public void run() {
+                    handler.fillOnServer(player, msg.recipeId);
+                }
+            });
+            return null;
+        }
 
-            RecipeView recipe = RecipeAccess.getRecipeById(msg.recipeId);
-            if (recipe == null) {
-                CraftingViewMod.LOG.warn("Recipe not found: id={}", msg.recipeId);
-                return null;
+        private void fillOnServer(EntityPlayerMP player, int recipeId) {
+            if (player == null || player.isDead) return;
+            Container openContainer = player.openContainer;
+            if (openContainer == null) return;
+
+            // The client can only fill the container it currently has open.
+            if (openContainer instanceof ContainerWorkbench && !openContainer.canInteractWith(player)) {
+                return;
             }
 
-            ContainerCarpentryBench container = (ContainerCarpentryBench) openContainer;
+            RecipeView recipe;
+            if (openContainer instanceof ContainerWorkbench) {
+                recipe = RecipeAccess.getWorkbenchRecipeById(recipeId);
+            } else {
+                recipe = RecipeAccess.getRecipeById(recipeId);
+            }
+            if (recipe == null) {
+                CraftingViewMod.LOG.warn("Recipe not found: id={}", recipeId);
+                return;
+            }
 
-            // Map recipeWidth x recipeHeight items into the 4x4 crafting grid
+            if (openContainer instanceof ContainerCarpentryBench) {
+                ContainerCarpentryBench container = (ContainerCarpentryBench) openContainer;
+                fill(player, container, container.craftMatrix, 4, recipe);
+            } else if (openContainer instanceof ContainerWorkbench) {
+                ContainerWorkbench container = (ContainerWorkbench) openContainer;
+                fill(player, container, container.craftMatrix, 3, recipe);
+            }
+        }
+
+        private void fill(EntityPlayerMP player, Container container, InventoryCrafting matrix, int columns,
+            RecipeView recipe) {
             int rw = recipe.recipeWidth;
             int rh = recipe.recipeHeight;
+            if (rw <= 0 || rh <= 0 || rw > columns || rh > columns) return;
+
+            // Clear the whole grid; leftovers go back to the player before refilling.
+            for (int slot = 0; slot < matrix.getSizeInventory(); slot++) {
+                ItemStack existing = matrix.getStackInSlot(slot);
+                if (existing != null) {
+                    returnToInventory(player, existing);
+                    matrix.setInventorySlotContents(slot, null);
+                }
+            }
+
+            int crafts = maxCrafts(player, recipe, rw, rh);
+            if (crafts <= 0) {
+                container.onCraftMatrixChanged(matrix);
+                container.detectAndSendChanges();
+                return;
+            }
+
             for (int row = 0; row < rh; row++) {
                 for (int col = 0; col < rw; col++) {
                     ItemStack required = recipe.getCraftingItem(row * rw + col);
                     if (required == null) continue;
 
-                    int gridSlot = row * 4 + col;
-
-                    // Skip if slot already has a matching item
-                    ItemStack existing = container.craftMatrix.getStackInSlot(gridSlot);
-                    if (existing != null && matches(existing, required, recipe.ignoreDamage, recipe.ignoreNBT))
-                        continue;
-
-                    // Return existing item in slot back to player inventory first
-                    if (existing != null) {
-                        returnToInventory(player, existing);
-                        container.craftMatrix.setInventorySlotContents(gridSlot, null);
-                    }
-
-                    ItemStack found = findAndTake(player, required, recipe.ignoreDamage, recipe.ignoreNBT);
+                    int amount = Math.max(1, required.stackSize) * crafts;
+                    ItemStack found = findAndTake(player, required, amount, recipe.ignoreDamage, recipe.ignoreNBT);
                     if (found != null) {
-                        container.craftMatrix.setInventorySlotContents(gridSlot, found);
+                        matrix.setInventorySlotContents(row * columns + col, found);
                     }
                 }
             }
 
-            container.onCraftMatrixChanged(container.craftMatrix);
+            container.onCraftMatrixChanged(matrix);
             container.detectAndSendChanges();
-            return null;
+        }
+
+        /**
+         * How many complete recipe sets fit both the inventory and the grid stack limits. Stacks are only
+         * placed; the player still takes the result manually.
+         */
+        private int maxCrafts(EntityPlayerMP player, RecipeView recipe, int rw, int rh) {
+            int max = 64;
+            for (int row = 0; row < rh; row++) {
+                for (int col = 0; col < rw; col++) {
+                    ItemStack required = recipe.getCraftingItem(row * rw + col);
+                    if (required != null) {
+                        int perCraft = Math.max(1, required.stackSize);
+                        int stackLimit = Math.max(1, required.getMaxStackSize());
+                        max = Math.min(max, stackLimit / perCraft);
+                    }
+                }
+            }
+            for (int crafts = max; crafts > 0; crafts--) {
+                if (canSupply(player, recipe, rw, rh, crafts)) {
+                    return crafts;
+                }
+            }
+            return 0;
+        }
+
+        private boolean canSupply(EntityPlayerMP player, RecipeView recipe, int rw, int rh, int crafts) {
+            ItemStack[] inventory = player.inventory.mainInventory;
+            int[] available = new int[inventory.length];
+            for (int i = 0; i < inventory.length; i++) {
+                available[i] = inventory[i] == null ? 0 : inventory[i].stackSize;
+            }
+
+            for (int row = 0; row < rh; row++) {
+                for (int col = 0; col < rw; col++) {
+                    ItemStack required = recipe.getCraftingItem(row * rw + col);
+                    if (required == null) continue;
+
+                    int need = Math.max(1, required.stackSize) * crafts;
+                    for (int i = 0; i < inventory.length && need > 0; i++) {
+                        if (available[i] > 0 && matches(inventory[i], required, recipe.ignoreDamage,
+                            recipe.ignoreNBT)) {
+                            int take = Math.min(need, available[i]);
+                            need -= take;
+                            available[i] -= take;
+                        }
+                    }
+                    if (need > 0) return false;
+                }
+            }
+            return true;
         }
 
         private void returnToInventory(EntityPlayerMP player, ItemStack stack) {
@@ -90,23 +178,51 @@ public class PacketFillCraftingGrid implements IMessage {
             }
         }
 
-        private ItemStack findAndTake(EntityPlayerMP player, ItemStack required, boolean ignoreDamage,
+        private ItemStack findAndTake(EntityPlayerMP player, ItemStack required, int amount, boolean ignoreDamage,
             boolean ignoreNBT) {
+            // First pass: verify enough exact stacks are available without consuming anything.
+            ItemStack template = null;
+            int available = 0;
             for (int invSlot = 0; invSlot < player.inventory.mainInventory.length; invSlot++) {
                 ItemStack stack = player.inventory.mainInventory[invSlot];
-                if (stack == null) continue;
-                if (!matches(stack, required, ignoreDamage, ignoreNBT)) continue;
+                if (stack == null || !matches(stack, required, ignoreDamage, ignoreNBT)) continue;
 
-                ItemStack taken = stack.copy();
-                taken.stackSize = 1;
-                if (stack.stackSize <= 1) {
-                    player.inventory.mainInventory[invSlot] = null;
-                } else {
-                    stack.stackSize--;
+                if (template == null) {
+                    template = stack.copy();
+                    template.stackSize = 0;
+                } else if (!sameStack(template, stack)) {
+                    continue;
                 }
-                return taken;
+                available += stack.stackSize;
+                if (available >= amount) break;
             }
-            return null;
+            if (template == null || available < amount) return null;
+
+            // Second pass: consume only after success is guaranteed.
+            ItemStack result = template.copy();
+            result.stackSize = 0;
+            int remaining = amount;
+            for (int invSlot = 0; invSlot < player.inventory.mainInventory.length && remaining > 0; invSlot++) {
+                ItemStack stack = player.inventory.mainInventory[invSlot];
+                if (stack == null || !sameStack(template, stack)) continue;
+
+                int take = Math.min(remaining, stack.stackSize);
+                result.stackSize += take;
+                remaining -= take;
+                stack.stackSize -= take;
+                if (stack.stackSize <= 0) {
+                    player.inventory.mainInventory[invSlot] = null;
+                }
+            }
+
+            return result;
+        }
+
+        private boolean sameStack(ItemStack a, ItemStack b) {
+            if (a.getItem() != b.getItem() || a.getItemDamage() != b.getItemDamage()) return false;
+            if (a.hasTagCompound() != b.hasTagCompound()) return false;
+            return !a.hasTagCompound() || a.getTagCompound()
+                .equals(b.getTagCompound());
         }
 
         private boolean matches(ItemStack stack, ItemStack required, boolean ignoreDamage, boolean ignoreNBT) {

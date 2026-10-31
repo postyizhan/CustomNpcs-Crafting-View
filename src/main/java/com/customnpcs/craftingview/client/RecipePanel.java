@@ -27,6 +27,7 @@ public class RecipePanel {
         new ArrayList<>());
 
     private final boolean isAnvil;
+    private final boolean workbench;
     private final List<RecipeView> allRecipes = new ArrayList<>();
     private final List<RecipeView> filtered = new ArrayList<>();
     private final List<CategoryDefinition> categories = new ArrayList<>();
@@ -42,9 +43,14 @@ public class RecipePanel {
     public GuiTextField searchField;
 
     public RecipePanel(boolean isAnvil) {
-        this.isAnvil = isAnvil;
+        this(isAnvil, false);
+    }
 
-        allRecipes.addAll(RecipeAccess.getAllCarpentryRecipes());
+    public RecipePanel(boolean isAnvil, boolean workbench) {
+        this.isAnvil = isAnvil;
+        this.workbench = workbench;
+
+        allRecipes.addAll(workbench ? RecipeAccess.getAllWorkbenchRecipes() : RecipeAccess.getAllCarpentryRecipes());
 
         // Build category list: Browse All + config categories
         categories.add(BROWSE_ALL);
@@ -183,6 +189,10 @@ public class RecipePanel {
 
     public boolean isAnvil() {
         return isAnvil;
+    }
+
+    public boolean isWorkbench() {
+        return workbench;
     }
 
     public int getPanelX(int guiLeft) {
